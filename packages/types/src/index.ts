@@ -39,3 +39,41 @@ export type LoginInput = {
   email: string;
   password: string;
 };
+
+export type Plan = 'free' | 'basic' | 'pro';
+
+export type Organization = {
+  id: string;
+  nombre: string;
+  slug: string;
+  descripcion: string | null;
+  plan: Plan;
+  activo: boolean;
+  ownerId: string;
+  createdAt: string;
+};
+
+export type Space = {
+  id: string;
+  nombre: string;
+  direccion: string | null;
+  spaceType: SpaceType;
+  precioPorCasa: number | null;
+  activo: boolean;
+  codigoInvitacion: string | null;
+  organizationId: string;
+  createdAt: string;
+};
+
+export type Membership = {
+  id: string;
+  userId: string;
+  spaceId: string;
+  rol: Rol;
+  numeroUnidad: string | null;
+  estadoAprobacion: EstadoAprobacion;
+  activo: boolean;
+  fechaSolicitud: string;
+  fechaAprobacion: string | null;
+  aprobadoPor: string | null;
+};

@@ -3,6 +3,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import authRouter from './routes/auth';
+import organizationsRouter from './routes/organizations';
+import spacesRouter from './routes/spaces';
 
 const app = new Hono();
 
@@ -12,9 +14,9 @@ app.use('*', cors());
 app.get('/', (c) => c.json({ status: 'ok', app: 'QRPass API v2' }));
 
 app.route('/auth', authRouter);
+app.route('/organizations', organizationsRouter);
+app.route('/spaces', spacesRouter);
 // TODO: agregar routers al migrar cada módulo
-// app.route('/users', usersRouter);
-// app.route('/barrios', barriosRouter);
 
 const PORT = Number(process.env.PORT) || 3000;
 

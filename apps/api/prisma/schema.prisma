@@ -40,3 +40,70 @@ model User {
 
   @@map("users")
 }
+
+enum Plan {
+  free
+  basic
+  pro
+}
+
+enum SpaceType {
+  residential
+  gym
+  club
+  coworking
+  event
+}
+
+model Organization {
+  id          String   @id @default(uuid())
+  nombre      String
+  slug        String   @unique
+  descripcion String?
+  plan        Plan     @default(free)
+  activo      Boolean  @default(true)
+  ownerId     String   @map("owner_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  spaces      Space[]
+
+  @@map("organizations")
+}
+
+model Space {
+  id                 String       @id @default(uuid())
+  nombre             String
+  direccion          String?
+  spaceType          SpaceType    @default(residential) @map("space_type")
+  precioPorCasa      Float?       @map("precio_por_casa")
+  activo             Boolean      @default(true)
+  codigoInvitacion   String?      @unique @map("codigo_invitacion")
+  organizationId     String       @map("organization_id")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  memberships        Membership[]
+
+  @@map("spaces")
+}
+
+model Membership {
+  id               String           @id @default(uuid())
+  userId           String           @map("user_id")
+  spaceId          String           @map("space_id")
+  rol              Rol              @default(vecino)
+  numeroUnidad     String?          @map("numero_unidad")
+  estadoAprobacion EstadoAprobacion @default(pendiente) @map("estado_aprobacion")
+  activo           Boolean          @default(false)
+  fechaSolicitud   DateTime         @default(now()) @map("fecha_solicitud")
+  fechaAprobacion  DateTime?        @map("fecha_aprobacion")
+  aprobadoPor      String?          @map("aprobado_por")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  space            Space            @relation(fields: [spaceId], references: [id])
+
+  @@unique([userId, spaceId])
+  @@map("memberships")
+}
