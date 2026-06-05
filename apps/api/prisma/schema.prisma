@@ -7,5 +7,36 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// TODO: definir modelos al migrar desde QRPass original
-// Los modelos se irán agregando a medida que se migre cada módulo
+enum Rol {
+  vecino
+  guardia
+  admin
+  super_admin
+}
+
+enum EstadoAprobacion {
+  pendiente
+  aprobado
+  rechazado
+}
+
+model User {
+  id                String           @id @default(uuid())
+  email             String           @unique
+  password          String
+  nombre            String?
+  telefono          String?
+  numeroCasa        String?          @map("numero_casa")
+  rol               Rol              @default(vecino)
+  barrioId          String?          @map("barrio_id")
+  activo            Boolean          @default(true)
+  estadoAprobacion  EstadoAprobacion @default(pendiente) @map("estado_aprobacion")
+  expoPushToken     String?          @map("expo_push_token")
+  qrCode            String?          @map("qr_code")
+  esTitular         Boolean          @default(true) @map("es_titular")
+  titularId         String?          @map("titular_id")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  @@map("users")
+}

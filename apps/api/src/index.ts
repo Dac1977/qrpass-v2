@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import authRouter from './routes/auth';
 
 const app = new Hono();
 
@@ -10,8 +11,8 @@ app.use('*', cors());
 
 app.get('/', (c) => c.json({ status: 'ok', app: 'QRPass API v2' }));
 
-// TODO: importar routers acá
-// app.route('/auth', authRouter);
+app.route('/auth', authRouter);
+// TODO: agregar routers al migrar cada módulo
 // app.route('/users', usersRouter);
 // app.route('/barrios', barriosRouter);
 
