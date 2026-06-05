@@ -132,3 +132,57 @@ model Ingreso {
 
   @@map("ingresos")
 }
+
+model AlertaEmergencia {
+  id           String    @id @default(uuid())
+  spaceId      String    @map("space_id")
+  vecinoId     String    @map("vecino_id")
+  tipo         String
+  mensaje      String?
+  numeroCasa   String?   @map("numero_casa")
+  latitud      Float?
+  longitud     Float?
+  atendida     Boolean   @default(false)
+  atendidaPor  String?   @map("atendida_por")
+  atendidaAt   DateTime? @map("atendida_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("alertas_emergencia")
+}
+
+model Aviso {
+  id        String   @id @default(uuid())
+  spaceId   String   @map("space_id")
+  autorId   String   @map("autor_id")
+  titulo    String
+  contenido String
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("avisos")
+}
+
+enum EstadoExpensa {
+  pendiente
+  pagada
+  vencida
+}
+
+model Expensa {
+  id           String        @id @default(uuid())
+  spaceId      String        @map("space_id")
+  userId       String        @map("user_id")
+  mes          Int
+  anio         Int
+  monto        Float
+  estado       EstadoExpensa @default(pendiente)
+  fechaVenc    DateTime?     @map("fecha_venc")
+  fechaPago    DateTime?     @map("fecha_pago")
+  comprobante  String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  @@unique([userId, spaceId, mes, anio])
+  @@map("expensas")
+}
