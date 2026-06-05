@@ -65,6 +65,22 @@ export type Space = {
   createdAt: string;
 };
 
+export type TipoIngreso = 'entrada' | 'salida';
+
+export type MetodoIngreso = 'qr' | 'manual' | 'facial';
+
+export type Ingreso = {
+  id: string;
+  userId: string;
+  spaceId: string;
+  tipo: TipoIngreso;
+  metodo: MetodoIngreso;
+  autorizado: boolean;
+  motivoRechazo: string | null;
+  registradoPor: string | null;
+  createdAt: string;
+};
+
 export type Membership = {
   id: string;
   userId: string;

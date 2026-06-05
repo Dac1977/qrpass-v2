@@ -107,3 +107,28 @@ model Membership {
   @@unique([userId, spaceId])
   @@map("memberships")
 }
+
+enum TipoIngreso {
+  entrada
+  salida
+}
+
+enum MetodoIngreso {
+  qr
+  manual
+  facial
+}
+
+model Ingreso {
+  id              String        @id @default(uuid())
+  userId          String        @map("user_id")
+  spaceId         String        @map("space_id")
+  tipo            TipoIngreso   @default(entrada)
+  metodo          MetodoIngreso @default(qr)
+  autorizado      Boolean
+  motivoRechazo   String?       @map("motivo_rechazo")
+  registradoPor   String?       @map("registrado_por")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@map("ingresos")
+}
