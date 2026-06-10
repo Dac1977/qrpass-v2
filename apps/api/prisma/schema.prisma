@@ -38,6 +38,8 @@ model User {
   createdAt         DateTime         @default(now()) @map("created_at")
   updatedAt         DateTime         @updatedAt @map("updated_at")
 
+  reservas          Reserva[]
+
   @@map("users")
 }
 
@@ -53,6 +55,7 @@ enum SpaceType {
   club
   coworking
   event
+  other
 }
 
 model Organization {
@@ -185,4 +188,122 @@ model Expensa {
 
   @@unique([userId, spaceId, mes, anio])
   @@map("expensas")
+}
+
+enum EstadoReserva {
+  pendiente
+  confirmada
+  rechazada
+  cancelada
+}
+
+enum EstadoPagoReserva {
+  sin_costo
+  pendiente_mp
+  pendiente_transferencia
+  pagado
+  rechazado
+}
+
+model Amenity {
+  id                  String   @id @default(uuid())
+  spaceId             String   @map("space_id")
+  nombre              String
+  descripcion         String?
+  capacidad           Int?
+  horaApertura        String   @map("hora_apertura")
+  horaCierre          String   @map("hora_cierre")
+  requiereAprobacion  Boolean  @default(false) @map("requiere_aprobacion")
+  precioReserva       Float    @default(0) @map("precio_reserva")
+  turnosConfig        Json?    @map("turnos_config")
+  activo              Boolean  @default(true)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  reservas            Reserva[]
+
+  @@map("amenities")
+}
+
+model Reserva {
+  id           String            @id @default(uuid())
+  spaceId      String            @map("space_id")
+  amenityId    String            @map("amenity_id")
+  vecinoId     String            @map("vecino_id")
+  fecha        DateTime
+  horaInicio   String            @map("hora_inicio")
+  horaFin      String            @map("hora_fin")
+  estado       EstadoReserva     @default(pendiente)
+  monto        Float?            @default(0)
+  estadoPago   EstadoPagoReserva @default(sin_costo) @map("estado_pago")
+  metodoPago   String?           @map("metodo_pago")
+  comprobante  String?           @map("comprobante_url")
+  notas        String?
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  amenity      Amenity           @relation(fields: [amenityId], references: [id])
+  vecino       User              @relation(fields: [vecinoId], references: [id])
+
+  @@index([spaceId])
+  @@map("reservas")
+}
+
+enum EstadoSolicitudEvento {
+  pendiente
+  aceptada
+  rechazada
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  spaceId     String   @map("space_id")
+  nombre      String
+  descripcion String?
+  fechaEvento DateTime @map("fecha_evento")
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  links       EventLink[]
+
+  @@map("events")
+}
+
+model EventLink {
+  id                   String   @id @default(uuid())
+  eventId              String   @map("event_id")
+  token                String   @unique
+  permiteAcompanantes  Boolean  @default(false) @map("permite_acompanantes")
+  maxAcompanantes      Int      @default(0) @map("max_acompanantes")
+  requiereDni          Boolean  @default(false) @map("requiere_dni")
+  usosPorPersona       Int      @default(1) @map("usos_por_persona")
+  habilitado           Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  event                Event    @relation(fields: [eventId], references: [id])
+  solicitudes          EventSolicitud[]
+
+  @@map("event_links")
+}
+
+model EventSolicitud {
+  id             String               @id @default(uuid())
+  eventLinkId    String               @map("event_link_id")
+  token          String               @unique
+  nombre         String
+  dni            String?
+  telefono       String?
+  acompanantes    Int                  @default(0)
+  estado         EstadoSolicitudEvento @default(pendiente)
+  qrCode         String               @map("qr_code")
+  usosPermitidos Int                  @default(1) @map("usos_permitidos")
+  usosActuales   Int                  @default(0) @map("usos_actuales")
+  acceptedAt     DateTime?            @map("accepted_at")
+  rejectedAt     DateTime?            @map("rejected_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  eventLink      EventLink            @relation(fields: [eventLinkId], references: [id])
+
+  @@map("event_solicitudes")
 }

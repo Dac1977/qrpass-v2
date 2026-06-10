@@ -6,13 +6,23 @@ import { authMiddleware, requireRol } from '../middleware/auth';
 
 const spaces = new Hono();
 
+// GET /spaces/by-code/:codigo — endpoint público (sin auth)
+spaces.get('/by-code/:codigo', async (c) => {
+  const space = await prisma.space.findUnique({
+    where: { codigoInvitacion: c.req.param('codigo').toUpperCase() },
+    select: { id: true, nombre: true, spaceType: true, activo: true },
+  });
+  if (!space || !space.activo) return c.json({ error: 'Código inválido' }, 404);
+  return c.json({ space });
+});
+
 spaces.use('*', authMiddleware);
 
 const createSpaceSchema = z.object({
   nombre: z.string().min(1),
   organizationId: z.string().uuid(),
   direccion: z.string().optional(),
-  spaceType: z.enum(['residential', 'gym', 'club', 'coworking', 'event']).optional(),
+  spaceType: z.enum(['residential', 'gym', 'club', 'coworking', 'event', 'other']).optional(),
   precioPorCasa: z.number().optional(),
 });
 

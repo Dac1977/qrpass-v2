@@ -36,13 +36,13 @@ alertas.post('/', zValidator('json', crearAlertaSchema), async (c) => {
     },
   });
 
-  const userIds = guardias.map((g) => g.userId);
+  const userIds = guardias.map((g: { userId: string }) => g.userId);
   if (userIds.length > 0) {
     const usuarios = await prisma.user.findMany({
       where: { id: { in: userIds }, expoPushToken: { not: null } },
       select: { expoPushToken: true },
     });
-    const tokens = usuarios.map((u) => u.expoPushToken!);
+    const tokens = usuarios.map((u: { expoPushToken: string | null }) => u.expoPushToken!);
     if (tokens.length > 0) {
       await sendPushNotification(tokens, {
         title: `🚨 Alerta: ${data.tipo}`,

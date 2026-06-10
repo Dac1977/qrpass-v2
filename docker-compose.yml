@@ -4,7 +4,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: qrpass
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-qrpass123}
       POSTGRES_DB: qrpass
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -17,8 +17,8 @@ services:
     depends_on:
       - db
     environment:
-      DATABASE_URL: postgresql://qrpass:${DB_PASSWORD}@db:5432/qrpass
-      JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgresql://qrpass:${DB_PASSWORD:-qrpass123}@db:5432/qrpass
+      JWT_SECRET: ${JWT_SECRET:-dev-super-secret-please-change}
       PORT: 3000
     ports:
       - "3000:3000"
@@ -27,7 +27,7 @@ services:
     build: ./apps/web
     restart: always
     environment:
-      NEXT_PUBLIC_API_URL: ${API_URL}
+      NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:3000}
     ports:
       - "3001:3001"
 

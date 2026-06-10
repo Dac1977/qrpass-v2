@@ -84,7 +84,7 @@ expensas.post(
     });
 
     const creadas = await prisma.$transaction(
-      miembros.map((m) =>
+      miembros.map((m: { userId: string }) =>
         prisma.expensa.upsert({
           where: { userId_spaceId_mes_anio: { userId: m.userId, spaceId, mes, anio } },
           create: {

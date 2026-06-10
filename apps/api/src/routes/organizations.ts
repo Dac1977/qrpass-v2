@@ -15,9 +15,12 @@ const createOrgSchema = z.object({
   plan: z.enum(['free', 'basic', 'pro']).optional(),
 });
 
-// GET /organizations — lista todas (solo super_admin)
-organizations.get('/', requireRol('super_admin'), async (c) => {
+// GET /organizations — super_admin ve todas; admin ve solo las suyas
+organizations.get('/', async (c) => {
+  const { userId, rol } = c.get('user');
+  const where = rol === 'super_admin' ? {} : { ownerId: userId };
   const orgs = await prisma.organization.findMany({
+    where,
     orderBy: { createdAt: 'desc' },
     include: { _count: { select: { spaces: true } } },
   });

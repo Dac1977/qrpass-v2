@@ -9,6 +9,11 @@ import accesosRouter from './routes/accesos';
 import alertasRouter from './routes/alertas';
 import avisosRouter from './routes/avisos';
 import expensasRouter from './routes/expensas';
+import amenitiesRouter from './routes/amenities';
+import reservasRouter from './routes/reservas';
+import usersRouter from './routes/users';
+import eventsRouter from './routes/events';
+import chatRouter from './routes/chat';
 
 const app = new Hono();
 
@@ -24,6 +29,11 @@ app.route('/accesos', accesosRouter);
 app.route('/alertas', alertasRouter);
 app.route('/avisos', avisosRouter);
 app.route('/expensas', expensasRouter);
+app.route('/amenities', amenitiesRouter);
+app.route('/reservas', reservasRouter);
+app.route('/users', usersRouter);
+app.route('/events', eventsRouter);
+app.route('/chat', chatRouter);
 
 const PORT = Number(process.env.PORT) || 3000;
 
