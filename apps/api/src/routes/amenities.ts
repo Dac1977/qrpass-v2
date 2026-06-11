@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { authMiddleware, requireRol } from '../middleware/auth';
 
@@ -32,7 +33,7 @@ const createAmenitySchema = z.object({
 const updateAmenitySchema = createAmenitySchema.omit({ spaceId: true }).partial();
 
 const mapPayloadToData = (payload: z.infer<typeof createAmenitySchema> | z.infer<typeof updateAmenitySchema>) => ({
-  ...(payload.spaceId ? { spaceId: payload.spaceId } : {}),
+  ...('spaceId' in payload && payload.spaceId ? { spaceId: payload.spaceId } : {}),
   ...(payload.nombre ? { nombre: payload.nombre } : {}),
   descripcion: payload.descripcion ?? (payload.descripcion === null ? null : undefined),
   capacidad: payload.capacidad ?? (payload.capacidad === null ? null : undefined),
@@ -40,7 +41,7 @@ const mapPayloadToData = (payload: z.infer<typeof createAmenitySchema> | z.infer
   ...(payload.horaCierre ? { horaCierre: payload.horaCierre } : {}),
   ...(payload.requiereAprobacion !== undefined ? { requiereAprobacion: payload.requiereAprobacion } : {}),
   ...(payload.precioReserva !== undefined ? { precioReserva: payload.precioReserva } : {}),
-  ...(payload.turnosConfig ? { turnosConfig: payload.turnosConfig } : payload.turnosConfig === null ? { turnosConfig: null } : {}),
+  ...(payload.turnosConfig !== undefined ? { turnosConfig: payload.turnosConfig ?? Prisma.JsonNull } : {}),
   ...(payload.activo !== undefined ? { activo: payload.activo } : {}),
 });
 
@@ -59,7 +60,7 @@ amenities.post(
   zValidator('json', createAmenitySchema),
   async (c) => {
     const data = mapPayloadToData(c.req.valid('json'));
-    const amenity = await prisma.amenity.create({ data });
+    const amenity = await prisma.amenity.create({ data: data as any });
     return c.json({ amenity }, 201);
   }
 );
@@ -73,7 +74,7 @@ amenities.patch(
     if (!amenity) return c.json({ error: 'Amenity no encontrado' }, 404);
 
     const data = mapPayloadToData(c.req.valid('json'));
-    const updated = await prisma.amenity.update({ where: { id: amenity.id }, data });
+    const updated = await prisma.amenity.update({ where: { id: amenity.id }, data: data as any });
     return c.json({ amenity: updated });
   }
 );

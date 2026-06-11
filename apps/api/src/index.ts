@@ -14,6 +14,11 @@ import reservasRouter from './routes/reservas';
 import usersRouter from './routes/users';
 import eventsRouter from './routes/events';
 import chatRouter from './routes/chat';
+import reclamosRouter from './routes/reclamos';
+import personalRouter from './routes/personal';
+import invitacionesRouter from './routes/invitaciones';
+import contactosRouter from './routes/contactos';
+import encuestasRouter from './routes/encuestas';
 
 const app = new Hono();
 
@@ -34,6 +39,11 @@ app.route('/reservas', reservasRouter);
 app.route('/users', usersRouter);
 app.route('/events', eventsRouter);
 app.route('/chat', chatRouter);
+app.route('/reclamos', reclamosRouter);
+app.route('/personal', personalRouter);
+app.route('/invitaciones', invitacionesRouter);
+app.route('/contactos', contactosRouter);
+app.route('/encuestas', encuestasRouter);
 
 const PORT = Number(process.env.PORT) || 3000;
 

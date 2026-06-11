@@ -24,95 +24,83 @@ accesos.post(
     const { userId: guardiaId } = c.get('user');
     const { qrCode, spaceId, tipo, metodo } = c.req.valid('json');
 
-    // Buscar usuario por QR
+    // 1. Buscar como usuario registrado
     const usuario = await prisma.user.findFirst({
       where: { qrCode },
-      select: {
-        id: true,
-        nombre: true,
-        email: true,
-        activo: true,
-        numeroCasa: true,
-      },
+      select: { id: true, nombre: true, activo: true, numeroCasa: true },
     });
 
-    if (!usuario) {
-      await prisma.ingreso.create({
-        data: {
-          userId: 'unknown',
-          spaceId,
-          tipo,
-          metodo,
-          autorizado: false,
-          motivoRechazo: 'QR no reconocido',
-          registradoPor: guardiaId,
-        },
+    if (usuario) {
+      if (!usuario.activo) {
+        await prisma.ingreso.create({
+          data: { userId: usuario.id, spaceId, tipo, metodo, autorizado: false, motivoRechazo: 'Usuario inactivo', registradoPor: guardiaId },
+        });
+        return c.json({ autorizado: false, motivo: 'Usuario inactivo' }, 403);
+      }
+      const membership = await prisma.membership.findUnique({
+        where: { userId_spaceId: { userId: usuario.id, spaceId } },
       });
-      return c.json({ autorizado: false, motivo: 'QR no reconocido' }, 403);
+      if (!membership || !membership.activo || membership.estadoAprobacion !== 'aprobado') {
+        await prisma.ingreso.create({
+          data: { userId: usuario.id, spaceId, tipo, metodo, autorizado: false, motivoRechazo: 'Sin membresía activa', registradoPor: guardiaId },
+        });
+        return c.json({ autorizado: false, motivo: 'Sin membresía activa en este space' }, 403);
+      }
+      const ingreso = await prisma.ingreso.create({
+        data: { userId: usuario.id, spaceId, tipo, metodo, autorizado: true, registradoPor: guardiaId },
+      });
+      return c.json({ autorizado: true, tipo_acceso: 'vecino', ingreso: { id: ingreso.id, tipo: ingreso.tipo, createdAt: ingreso.createdAt }, usuario: { id: usuario.id, nombre: usuario.nombre, numeroCasa: usuario.numeroCasa } });
     }
 
-    if (!usuario.activo) {
-      await prisma.ingreso.create({
-        data: {
-          userId: usuario.id,
-          spaceId,
-          tipo,
-          metodo,
-          autorizado: false,
-          motivoRechazo: 'Usuario inactivo',
-          registradoPor: guardiaId,
-        },
+    // 2. Buscar como invitación
+    const invitacion = await prisma.invitacion.findFirst({ where: { qrCode, spaceId } });
+
+    if (invitacion) {
+      if (!invitacion.activo) {
+        return c.json({ autorizado: false, motivo: 'Invitación revocada' }, 403);
+      }
+      if (invitacion.fechaVence && new Date(invitacion.fechaVence) < new Date()) {
+        return c.json({ autorizado: false, motivo: 'Invitación vencida' }, 403);
+      }
+      if (invitacion.usosActuales >= invitacion.usosMaximos) {
+        return c.json({ autorizado: false, motivo: 'Invitación sin usos disponibles' }, 403);
+      }
+      await prisma.invitacion.update({
+        where: { id: invitacion.id },
+        data: { usosActuales: { increment: 1 } },
       });
-      return c.json({ autorizado: false, motivo: 'Usuario inactivo' }, 403);
+      const ingreso = await prisma.ingreso.create({
+        data: { userId: invitacion.vecinoId, spaceId, tipo, metodo, autorizado: true, registradoPor: guardiaId, invitacionId: invitacion.id },
+      });
+      return c.json({ autorizado: true, tipo_acceso: invitacion.tipo, ingreso: { id: ingreso.id, tipo: ingreso.tipo, createdAt: ingreso.createdAt }, usuario: { nombre: invitacion.nombre, dni: invitacion.dni, patente: invitacion.patente } });
     }
 
-    // Verificar membership activa y aprobada
-    const membership = await prisma.membership.findUnique({
-      where: {
-        userId_spaceId: { userId: usuario.id, spaceId },
-      },
-    });
+    // 3. Buscar como personal permanente
+    const personalItem = await prisma.personalPermanente.findFirst({ where: { qrCode, spaceId, activo: true } });
 
-    if (!membership || !membership.activo || membership.estadoAprobacion !== 'aprobado') {
-      await prisma.ingreso.create({
-        data: {
-          userId: usuario.id,
-          spaceId,
-          tipo,
-          metodo,
-          autorizado: false,
-          motivoRechazo: 'Sin membresía activa en este space',
-          registradoPor: guardiaId,
-        },
+    if (personalItem) {
+      // Verificar permiso para el día actual
+      const diaSemana = new Date().getDay();
+      const permiso = await prisma.permisoHorario.findFirst({
+        where: { personalId: personalItem.id, diaSemana, activo: true },
       });
-      return c.json({ autorizado: false, motivo: 'Sin membresía activa en este space' }, 403);
+      if (!permiso) {
+        await prisma.ingreso.create({
+          data: { userId: personalItem.vecinoId, spaceId, tipo, metodo, autorizado: false, motivoRechazo: 'Sin permiso para hoy', registradoPor: guardiaId, personalId: personalItem.id },
+        });
+        return c.json({ autorizado: false, motivo: 'Personal sin permiso para hoy' }, 403);
+      }
+      const ingreso = await prisma.ingreso.create({
+        data: { userId: personalItem.vecinoId, spaceId, tipo, metodo, autorizado: true, registradoPor: guardiaId, personalId: personalItem.id },
+      });
+      return c.json({ autorizado: true, tipo_acceso: 'personal', ingreso: { id: ingreso.id, tipo: ingreso.tipo, createdAt: ingreso.createdAt }, usuario: { nombre: personalItem.nombre, dni: personalItem.dni, tipo: personalItem.tipo } });
     }
 
-    // Acceso autorizado
-    const ingreso = await prisma.ingreso.create({
-      data: {
-        userId: usuario.id,
-        spaceId,
-        tipo,
-        metodo,
-        autorizado: true,
-        registradoPor: guardiaId,
-      },
+    // QR no reconocido
+    await prisma.ingreso.create({
+      data: { userId: 'unknown', spaceId, tipo, metodo, autorizado: false, motivoRechazo: 'QR no reconocido', registradoPor: guardiaId },
     });
-
-    return c.json({
-      autorizado: true,
-      ingreso: {
-        id: ingreso.id,
-        tipo: ingreso.tipo,
-        createdAt: ingreso.createdAt,
-      },
-      usuario: {
-        id: usuario.id,
-        nombre: usuario.nombre,
-        numeroCasa: usuario.numeroCasa,
-      },
-    });
+    return c.json({ autorizado: false, motivo: 'QR no reconocido' }, 403);
   }
 );
 

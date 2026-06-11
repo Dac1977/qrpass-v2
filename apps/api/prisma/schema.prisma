@@ -131,6 +131,8 @@ model Ingreso {
   autorizado      Boolean
   motivoRechazo   String?       @map("motivo_rechazo")
   registradoPor   String?       @map("registrado_por")
+  invitacionId    String?       @map("invitacion_id")
+  personalId      String?       @map("personal_id")
   createdAt       DateTime      @default(now()) @map("created_at")
 
   @@map("ingresos")
@@ -306,4 +308,149 @@ model EventSolicitud {
   eventLink      EventLink            @relation(fields: [eventLinkId], references: [id])
 
   @@map("event_solicitudes")
+}
+
+// ─── Reclamos ────────────────────────────────────────────
+
+enum CategoriaReclamo {
+  mantenimiento
+  seguridad
+  limpieza
+  ruidos
+  espacios_comunes
+  general
+  otro
+}
+
+enum EstadoReclamo {
+  pendiente
+  en_proceso
+  resuelto
+}
+
+model Reclamo {
+  id          String           @id @default(uuid())
+  spaceId     String           @map("space_id")
+  userId      String           @map("user_id")
+  titulo      String
+  descripcion String
+  categoria   CategoriaReclamo @default(general)
+  estado      EstadoReclamo    @default(pendiente)
+  foto        String?
+  respuesta   String?
+  adminId     String?          @map("admin_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@map("reclamos")
+}
+
+// ─── Personal Permanente ─────────────────────────────────
+
+model PersonalPermanente {
+  id        String           @id @default(uuid())
+  spaceId   String           @map("space_id")
+  vecinoId  String           @map("vecino_id")
+  nombre    String
+  dni       String?
+  foto      String?
+  tipo      String           @default("empleada")
+  qrCode    String           @unique @map("qr_code")
+  activo    Boolean          @default(true)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  permisos  PermisoHorario[]
+
+  @@map("personal_permanente")
+}
+
+model PermisoHorario {
+  id          String             @id @default(uuid())
+  personalId  String             @map("personal_id")
+  vecinoId    String             @map("vecino_id")
+  diaSemana   Int                @map("dia_semana")
+  horaEntrada String?            @map("hora_entrada")
+  horaSalida  String?            @map("hora_salida")
+  activo      Boolean            @default(true)
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  personal    PersonalPermanente @relation(fields: [personalId], references: [id])
+
+  @@map("permisos_horarios")
+}
+
+// ─── Invitaciones ────────────────────────────────────────
+
+enum TipoInvitacion {
+  visita
+  delivery
+}
+
+model Invitacion {
+  id           String         @id @default(uuid())
+  spaceId      String         @map("space_id")
+  vecinoId     String         @map("vecino_id")
+  nombre       String
+  dni          String?
+  telefono     String?
+  patente      String?
+  tipo         TipoInvitacion @default(visita)
+  qrCode       String         @unique @map("qr_code")
+  usosMaximos  Int            @default(1) @map("usos_maximos")
+  usosActuales Int            @default(0) @map("usos_actuales")
+  fechaVence   DateTime?      @map("fecha_vence")
+  activo       Boolean        @default(true)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  @@map("invitaciones")
+}
+
+// ─── Contactos ───────────────────────────────────────────
+
+model Contacto {
+  id        String   @id @default(uuid())
+  vecinoId  String   @map("vecino_id")
+  nombre    String
+  dni       String?
+  telefono  String?
+  patente   String?
+  foto      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("contactos")
+}
+
+// ─── Encuestas ───────────────────────────────────────────
+
+model Encuesta {
+  id          String    @id @default(uuid())
+  spaceId     String    @map("space_id")
+  autorId     String    @map("autor_id")
+  titulo      String
+  descripcion String?
+  opciones    Json
+  multiple    Boolean   @default(false)
+  activa      Boolean   @default(true)
+  fechaCierre DateTime? @map("fecha_cierre")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  votos       Voto[]
+
+  @@map("encuestas")
+}
+
+model Voto {
+  id         String   @id @default(uuid())
+  encuestaId String   @map("encuesta_id")
+  vecinoId   String   @map("vecino_id")
+  opciones   Json
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  encuesta   Encuesta @relation(fields: [encuestaId], references: [id])
+
+  @@unique([encuestaId, vecinoId])
+  @@map("votos")
 }
