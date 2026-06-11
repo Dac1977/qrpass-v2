@@ -1,0 +1,71 @@
+{
+  "expo": {
+    "name": "Barrios",
+    "slug": "barrios-app",
+    "version": "1.0.0",
+    "scheme": "qrpass",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.diego1977.barriosapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.diego1977.barriosapp",
+      "googleServicesFile": "./google-services.json",
+      "minSdkVersion": 26
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5e8eaf57-a066-4739-855c-4ac66918a1b9"
+      }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ],
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME) necesita acceso a la cámara para escanear códigos QR y reconocimiento facial.",
+          "enableBarcodeScanner": true,
+          "enableFaceDetection": true
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "$(PRODUCT_NAME) usa tu ubicación para enviarla al personal en caso de emergencia."
+        }
+      ]
+    ],
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": "1.0.0"
+  }
+}
