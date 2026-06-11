@@ -41,8 +41,8 @@ const EXPENSAS_LABEL: Record<string, string> = {
 function HomeTabs() {
   const insets = useSafeAreaInsets();
   const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
-  const esTitular = profile?.es_titular ?? true;
+  const labels = getSpaceLabels(space?.spaceType);
+  const esTitular = profile?.esTitular ?? true;
   const expensasLabel = labels.payments;
 
   return (
@@ -123,7 +123,7 @@ function HomeTabs() {
 
 export function VecinoNavigator() {
   const { space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
+  const labels = getSpaceLabels(space?.spaceType);
   return (
     <Stack.Navigator
       screenOptions={{

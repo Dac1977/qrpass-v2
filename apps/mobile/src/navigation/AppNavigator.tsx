@@ -7,10 +7,10 @@ import { VecinoNavigator } from './VecinoNavigator';
 import { GuardiaNavigator } from './GuardiaNavigator';
 import { AdminNavigator } from './AdminNavigator';
 import { registerForPushNotificationsAsync } from '../lib/notifications';
-import { supabase } from '../lib/supabase';
+import { authApi } from '../lib/api';
 
 export function AppNavigator() {
-  const { session, profile, loading, initialized, initialize } = useAuthStore();
+  const { token, profile, loading, initialized, initialize } = useAuthStore();
 
   useEffect(() => {
     initialize();
@@ -18,15 +18,12 @@ export function AppNavigator() {
 
   useEffect(() => {
     const syncPushToken = async () => {
-      if (!session || !profile?.id) return;
+      if (!token || !profile?.id) return;
 
       try {
-        const token = await registerForPushNotificationsAsync();
-        if (token && token !== profile.expo_push_token) {
-          await supabase
-            .from('profiles')
-            .update({ expo_push_token: token })
-            .eq('id', profile.id);
+        const pushToken = await registerForPushNotificationsAsync();
+        if (pushToken && pushToken !== profile.expoPushToken) {
+          await authApi.updatePushToken(pushToken);
           await useAuthStore.getState().fetchProfile();
         }
       } catch (error) {
@@ -35,7 +32,7 @@ export function AppNavigator() {
     };
 
     syncPushToken();
-  }, [session, profile?.id, profile?.expo_push_token]);
+  }, [token, profile?.id, profile?.expoPushToken]);
 
   if (!initialized || loading) {
     return (
@@ -46,7 +43,7 @@ export function AppNavigator() {
   }
 
   const getNavigator = () => {
-    if (!session) {
+    if (!token) {
       return <AuthNavigator />;
     }
 

@@ -341,6 +341,8 @@ export const authApi = {
 export const spacesApi = {
   getMemberships: () => apiFetch<{ memberships: Membership[] }>('/spaces/mis-memberships'),
   getSpace: (id: string) => apiFetch<{ space: Space }>(`/spaces/${id}`),
+  byCode: (codigo: string) =>
+    apiFetch<{ space: { id: string; nombre: string; spaceType: SpaceType } }>(`/spaces/by-code/${codigo.toUpperCase()}`),
   join: (codigoInvitacion: string, numeroUnidad?: string) =>
     apiFetch('/spaces/join', { method: 'POST', body: JSON.stringify({ codigoInvitacion, numeroUnidad }) }),
 };

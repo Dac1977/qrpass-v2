@@ -8,6 +8,13 @@ const users = new Hono();
 
 users.use('*', authMiddleware);
 
+// PATCH /users/me/push-token — actualizar expo push token del usuario autenticado
+users.patch('/me/push-token', zValidator('json', z.object({ expoPushToken: z.string() })), async (c) => {
+  const { userId } = c.get('user');
+  await prisma.user.update({ where: { id: userId }, data: { expoPushToken: c.req.valid('json').expoPushToken } });
+  return c.json({ ok: true });
+});
+
 // GET /users — lista todos los usuarios (super_admin)
 users.get('/', requireRol('super_admin'), async (c) => {
   const { search, rol, spaceId } = c.req.query();

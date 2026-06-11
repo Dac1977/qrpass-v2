@@ -1,4 +1,4 @@
-import { SpaceType } from '../lib/supabase';
+import { SpaceType } from '../lib/api';
 
 export type SpaceLabels = {
   members: string;

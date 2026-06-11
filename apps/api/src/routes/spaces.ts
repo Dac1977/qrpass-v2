@@ -111,6 +111,28 @@ spaces.get('/:id/members', async (c) => {
   return c.json({ members });
 });
 
+// GET /spaces/mis-memberships — memberships del usuario autenticado
+spaces.get('/mis-memberships', async (c) => {
+  const { userId } = c.get('user');
+  const memberships = await prisma.membership.findMany({
+    where: { userId },
+    include: { space: { select: { nombre: true, spaceType: true, codigoInvitacion: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return c.json({
+    memberships: memberships.map((m) => ({
+      spaceId: m.spaceId,
+      spaceName: m.space.nombre,
+      spaceType: m.space.spaceType,
+      rol: m.rol,
+      numeroUnidad: m.numeroUnidad,
+      activo: m.activo,
+      estadoAprobacion: m.estadoAprobacion,
+      codigoInvitacion: m.space.codigoInvitacion,
+    })),
+  });
+});
+
 // POST /spaces/join — unirse con código de invitación
 spaces.post(
   '/join',

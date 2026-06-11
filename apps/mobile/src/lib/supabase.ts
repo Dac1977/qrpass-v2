@@ -46,9 +46,8 @@ export type {
   ValidacionQR,
 } from './api';
 
-// Stub vacío para detectar usos pendientes de migrar
-// @ts-expect-error — intencional: fuerza error en cualquier pantalla que siga usando supabase directamente
-export const supabase = new Proxy({}, {
+// Stub vacío para detectar usos pendientes de migrar en runtime
+export const supabase = new Proxy({} as any, {
   get(_t, prop) {
     throw new Error(`[MIGRACIÓN PENDIENTE] supabase.${String(prop)}() ya no existe. Usá los métodos de api.ts`);
   },

@@ -13,7 +13,7 @@ import {
   Image,
 } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
-import { supabase } from '../../lib/supabase';
+import { spacesApi } from '../../lib/api';
 
 export function RegisterScreen({ navigation, route }: any) {
   const initialCodigo: string = route?.params?.codigo ?? '';
@@ -46,23 +46,14 @@ export function RegisterScreen({ navigation, route }: any) {
 
     setValidatingCode(true);
     try {
-      const { data, error } = await supabase
-        .rpc('validar_codigo_invitacion', { p_codigo: codigoBarrio.toUpperCase() });
-
-      if (error) throw error;
-
-      const result = (data as any[])[0];
-      if (result?.valido) {
-        setBarrioInfo({ id: result.barrio_id, nombre: result.barrio_nombre });
-        setStep('registro');
-      } else {
-        Alert.alert('Error', 'Código de invitación inválido o inactivo');
-      }
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Error al validar el código');
+      const { space } = await spacesApi.byCode(codigoBarrio);
+      setBarrioInfo({ id: space.id, nombre: space.nombre });
+      setStep('registro');
+    } catch (error: any) {
+      Alert.alert('Error', error?.message ?? 'Código de invitación inválido o inactivo');
+    } finally {
+      setValidatingCode(false);
     }
-    setValidatingCode(false);
   };
 
   const handleRegister = async () => {
@@ -86,10 +77,10 @@ export function RegisterScreen({ navigation, route }: any) {
       return;
     }
 
-    const { error } = await signUp(email, password, nombre, 'vecino', {
-      barrio_id: barrioInfo.id,
-      numero_casa: numeroCasa || null,
-      telefono: telefono || null,
+    const { error } = await signUp(email, password, nombre, {
+      codigoInvitacion: codigoBarrio,
+      numeroUnidad: numeroCasa || undefined,
+      telefono: telefono || undefined,
     });
     if (error) {
       Alert.alert('Error', error.message);
