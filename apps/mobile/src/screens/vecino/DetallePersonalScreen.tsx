@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
 import ViewShot from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
-import { supabase, PersonalPermanente, PermisoHorario } from '../../lib/supabase';
+import { personalApi, PersonalPermanente, PermisoHorario } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 
 const DIAS_LABELS: Record<number, string> = {
@@ -51,26 +51,15 @@ export function DetallePersonalScreen({ route, navigation }: any) {
 
   const fetchData = async () => {
     setLoading(true);
-
-    const [{ data: personalData }, { data: horariosData }] = await Promise.all([
-      supabase
-        .from('personal_permanente')
-        .select('*')
-        .eq('id', personalId)
-        .single(),
-      supabase
-        .from('permisos_horarios')
-        .select('*')
-        .eq('personal_id', personalId)
-        .eq('vecino_id', profile?.id)
-        .eq('activo', true)
-        .order('dia_semana'),
-    ]);
-
-    if (personalData) setPersonal(personalData as PersonalPermanente);
-    if (horariosData) setHorarios(horariosData as PermisoHorario[]);
-
-    setLoading(false);
+    try {
+      const { personal: todos } = await personalApi.mis();
+      const found = todos.find((p) => p.id === personalId) ?? null;
+      setPersonal(found);
+    } catch {
+      setPersonal(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const compartirQR = async () => {
@@ -95,34 +84,22 @@ export function DetallePersonalScreen({ route, navigation }: any) {
 
   const desvincular = () => {
     const doDesvincular = async () => {
-      const { error } = await supabase
-        .from('permisos_horarios')
-        .update({ activo: false })
-        .eq('personal_id', personalId)
-        .eq('vecino_id', profile?.id);
-
-      if (error) {
+      try {
+        await personalApi.eliminar(personalId);
+        navigation.goBack();
+      } catch {
         Alert.alert('Error', 'No se pudo desvincular.');
-        return;
       }
-
-      navigation.goBack();
     };
 
-    if (Platform.OS === 'web') {
-      if (window.confirm('¿Querés desvincular a esta persona de tu casa? Ya no podrá ingresar con los horarios configurados.')) {
-        doDesvincular();
-      }
-    } else {
-      Alert.alert(
-        'Desvincular',
-        '¿Querés desvincular a esta persona de tu casa? Ya no podrá ingresar con los horarios configurados.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Desvincular', style: 'destructive', onPress: doDesvincular },
-        ]
-      );
-    }
+    Alert.alert(
+      'Desvincular',
+      '¿Querés desvincular a esta persona de tu casa? Ya no podrá ingresar con los horarios configurados.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Desvincular', style: 'destructive', onPress: doDesvincular },
+      ]
+    );
   };
 
   const formatHora = (h: string) => h?.slice(0, 5) || '';
@@ -147,8 +124,8 @@ export function DetallePersonalScreen({ route, navigation }: any) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Perfil */}
       <View style={styles.profileCard}>
-        {personal.foto_url ? (
-          <Image source={{ uri: personal.foto_url }} style={styles.avatar} />
+        {personal.foto ? (
+          <Image source={{ uri: personal.foto }} style={styles.avatar} />
         ) : (
           <View style={styles.avatarPlaceholder}>
             <Ionicons name="person" size={40} color="#64748b" />
@@ -169,10 +146,10 @@ export function DetallePersonalScreen({ route, navigation }: any) {
         <Text style={styles.sectionTitle}>Código QR</Text>
         <ViewShot ref={viewShotRef} options={{ format: 'png', quality: 1 }}>
           <View style={styles.qrCard}>
-            <QRCode value={personal.qr_code} size={180} backgroundColor="#fff" color="#0f172a" />
+            <QRCode value={personal.qrCode} size={180} backgroundColor="#fff" color="#0f172a" />
             <Text style={styles.qrNombre}>{personal.nombre}</Text>
             <Text style={styles.qrDni}>DNI: {personal.dni}</Text>
-            <Text style={styles.qrCode}>{personal.qr_code}</Text>
+            <Text style={styles.qrCode}>{personal.qrCode}</Text>
           </View>
         </ViewShot>
         <TouchableOpacity style={styles.shareBtn} onPress={compartirQR} activeOpacity={0.7}>
@@ -195,7 +172,7 @@ export function DetallePersonalScreen({ route, navigation }: any) {
       <View style={styles.horariosSection}>
         <Text style={styles.sectionTitle}>Horarios Permitidos</Text>
         {DIAS_ORDER.map((dia) => {
-          const horario = horarios.find((h) => h.dia_semana === dia);
+          const horario = personal.permisos.find((h) => h.diaSemana === dia);
           if (!horario) return null;
           return (
             <View key={dia} style={styles.horarioCard}>
@@ -204,15 +181,15 @@ export function DetallePersonalScreen({ route, navigation }: any) {
               </View>
               <View style={styles.horarioHoras}>
                 <Ionicons name="log-in-outline" size={16} color="#22c55e" />
-                <Text style={styles.horarioHoraText}>{formatHora(horario.hora_entrada)}</Text>
+                <Text style={styles.horarioHoraText}>{formatHora(horario.horaEntrada ?? '')}</Text>
                 <Ionicons name="arrow-forward" size={14} color="#475569" />
                 <Ionicons name="log-out-outline" size={16} color="#f97316" />
-                <Text style={styles.horarioHoraText}>{formatHora(horario.hora_salida)}</Text>
+                <Text style={styles.horarioHoraText}>{formatHora(horario.horaSalida ?? '')}</Text>
               </View>
             </View>
           );
         })}
-        {horarios.length === 0 && (
+        {personal.permisos.length === 0 && (
           <Text style={styles.noHorarios}>Sin horarios configurados para tu casa</Text>
         )}
       </View>

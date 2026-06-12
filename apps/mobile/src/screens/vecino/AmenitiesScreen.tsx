@@ -13,7 +13,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, Amenity, Reserva } from '../../lib/supabase';
+import { amenitiesApi, Amenity, Reserva } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,7 +23,7 @@ const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 export function AmenitiesScreen() {
   const [amenities, setAmenities] = useState<Amenity[]>([]);
-  const [misReservas, setMisReservas] = useState<(Reserva & { amenity_nombre?: string })[]>([]);
+  const [misReservas, setMisReservas] = useState<Reserva[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showReservar, setShowReservar] = useState(false);
   const [selectedAmenity, setSelectedAmenity] = useState<Amenity | null>(null);
@@ -49,34 +49,24 @@ export function AmenitiesScreen() {
   const [reservasCalendario, setReservasCalendario] = useState<Record<string, Reserva[]>>({});
   const [diaSeleccionado, setDiaSeleccionado] = useState<Date | null>(null);
   const [loadingDisponibilidad, setLoadingDisponibilidad] = useState(false);
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
 
   const fetchAmenities = async () => {
-    if (!profile?.barrio_id) return;
-    const { data } = await supabase
-      .from('amenities')
-      .select('*')
-      .eq('barrio_id', profile.barrio_id)
-      .eq('activo', true)
-      .order('nombre');
-    if (data) setAmenities(data);
+    if (!space?.id) return;
+    try {
+      const { amenities: data } = await amenitiesApi.listar(space.id);
+      setAmenities(data);
+    } catch {
+      // silently ignore
+    }
   };
 
   const fetchMisReservas = async () => {
-    if (!profile?.id) return;
-    const { data } = await supabase
-      .from('reservas')
-      .select('*, amenities(nombre)')
-      .eq('vecino_id', profile.id)
-      .order('fecha', { ascending: false })
-      .limit(30);
-    if (data) {
-      setMisReservas(
-        data.map((r: any) => ({
-          ...r,
-          amenity_nombre: r.amenities?.nombre,
-        }))
-      );
+    try {
+      const { reservas: data } = await amenitiesApi.misReservas();
+      setMisReservas(data);
+    } catch {
+      // silently ignore
     }
   };
 
@@ -84,7 +74,7 @@ export function AmenitiesScreen() {
     useCallback(() => {
       fetchAmenities();
       fetchMisReservas();
-    }, [profile?.barrio_id, profile?.id])
+    }, [space?.id])
   );
 
   const onRefresh = async () => {
@@ -136,27 +126,22 @@ export function AmenitiesScreen() {
     await cargarReservasMes(amenity.id, inicioMes);
   };
 
-  const cargarReservasMes = async (amenityId: string, mesBase: Date) => {
+  const cargarReservasMes = async (amenityId: string, _mesBase: Date) => {
     setLoadingDisponibilidad(true);
-    const inicio = new Date(mesBase.getFullYear(), mesBase.getMonth(), 1);
-    const fin = new Date(mesBase.getFullYear(), mesBase.getMonth() + 1, 0);
-    const { data } = await supabase
-      .from('reservas')
-      .select('*')
-      .eq('amenity_id', amenityId)
-      .gte('fecha', formatFechaKey(inicio))
-      .lte('fecha', formatFechaKey(fin))
-      .in('estado', ['confirmada', 'pendiente']);
-    const agrupadas: Record<string, Reserva[]> = {};
-    (data || []).forEach((reserva) => {
-      if (!agrupadas[reserva.fecha]) agrupadas[reserva.fecha] = [];
-      agrupadas[reserva.fecha].push(reserva);
-    });
-    Object.keys(agrupadas).forEach((fecha) => {
-      agrupadas[fecha].sort((a, b) => (a.hora_inicio > b.hora_inicio ? 1 : -1));
-    });
-    setReservasCalendario(agrupadas);
-    setLoadingDisponibilidad(false);
+    try {
+      const hoy = formatFechaKey(new Date());
+      const { reservas: data } = await amenitiesApi.reservasPorFecha(amenityId, hoy);
+      const agrupadas: Record<string, Reserva[]> = {};
+      data.forEach((reserva) => {
+        if (!agrupadas[reserva.fecha]) agrupadas[reserva.fecha] = [];
+        agrupadas[reserva.fecha].push(reserva);
+      });
+      setReservasCalendario(agrupadas);
+    } catch {
+      setReservasCalendario({});
+    } finally {
+      setLoadingDisponibilidad(false);
+    }
   };
 
   const cambiarMes = async (delta: number) => {
@@ -181,7 +166,7 @@ export function AmenitiesScreen() {
     setFechaDate(baseFecha);
     setFechaISOSeleccionada(baseFecha ? formatFechaKey(baseFecha) : null);
     const defaultInicio = baseFecha ? new Date(baseFecha) : new Date();
-    const [h, m] = (amenity.hora_apertura?.slice(0, 5) || '08:00').split(':');
+    const [h, m] = (amenity.horaApertura?.slice(0, 5) || '08:00').split(':');
     defaultInicio.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0);
     setHoraInicioDate(defaultInicio);
     setHoraFinDate(baseFecha ? new Date(baseFecha) : null);
@@ -235,7 +220,7 @@ export function AmenitiesScreen() {
   };
 
   const crearReserva = async () => {
-    if (!fechaDate || !horaInicioDate || !horaFinDate || !selectedAmenity || !profile) {
+    if (!fechaDate || !horaInicioDate || !horaFinDate || !selectedAmenity) {
       Alert.alert('Error', 'Completá fecha, hora inicio y hora fin');
       return;
     }
@@ -246,7 +231,7 @@ export function AmenitiesScreen() {
     }
 
     const fechaISO = formatFechaKey(fechaDate);
-    const tieneTurnos = Array.isArray(selectedAmenity.turnos_config) && selectedAmenity.turnos_config.length > 0;
+    const tieneTurnos = Array.isArray(selectedAmenity.turnosConfig) && (selectedAmenity.turnosConfig?.length ?? 0) > 0;
     if (tieneTurnos && !turnoSeleccionadoId) {
       Alert.alert('Elegí un turno', 'Seleccioná uno de los turnos disponibles para continuar.');
       return;
@@ -256,49 +241,25 @@ export function AmenitiesScreen() {
 
     setGuardando(true);
     try {
-      // Verificar disponibilidad
-      const { data: existentes } = await supabase
-        .from('reservas')
-        .select('*')
-        .eq('amenity_id', selectedAmenity.id)
-        .eq('fecha', fechaISO)
-        .in('estado', ['confirmada', 'pendiente']);
-
-      const horaInicioStr = horaInicio;
-      const horaFinStr = horaFin;
-      const conflicto = existentes?.some((r) => {
-        return horaInicioStr < r.hora_fin && horaFinStr > r.hora_inicio;
-      });
-
-      if (conflicto) {
-        Alert.alert('No disponible', 'Ya hay una reserva en ese horario');
-        setGuardando(false);
-        return;
-      }
-
-      const { error } = await supabase.from('reservas').insert({
-        amenity_id: selectedAmenity.id,
-        vecino_id: profile.id,
-        barrio_id: profile.barrio_id,
+      await amenitiesApi.crear({
+        amenityId: selectedAmenity.id,
+        spaceId: space?.id ?? '',
         fecha: fechaISO,
-        hora_inicio: horaInicioStr,
-        hora_fin: horaFinStr,
-        estado: selectedAmenity.requiere_aprobacion ? 'pendiente' : 'confirmada',
-        notas: notas.trim() || null,
+        horaInicio: horaInicio,
+        horaFin: horaFin,
+        notas: notas.trim() || undefined,
       });
-
-      if (error) throw error;
 
       setShowReservar(false);
       fetchMisReservas();
       Alert.alert(
         '¡Reserva creada!',
-        selectedAmenity.requiere_aprobacion
+        selectedAmenity.requiereAprobacion
           ? 'Tu reserva está pendiente de aprobación del admin.'
           : 'Tu reserva fue confirmada.'
       );
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', error.message ?? 'No se pudo crear la reserva');
     } finally {
       setGuardando(false);
     }
@@ -310,24 +271,20 @@ export function AmenitiesScreen() {
         setReservasTurnoDia([]);
         return;
       }
-      const tieneTurnos = Array.isArray(selectedAmenity.turnos_config) && selectedAmenity.turnos_config.length > 0;
+      const tieneTurnos = Array.isArray(selectedAmenity.turnosConfig) && (selectedAmenity.turnosConfig?.length ?? 0) > 0;
       if (!tieneTurnos) {
         setReservasTurnoDia([]);
         return;
       }
       setCargandoTurnos(true);
-      const { data, error } = await supabase
-        .from('reservas')
-        .select('*')
-        .eq('amenity_id', selectedAmenity.id)
-        .eq('fecha', fechaISOSeleccionada)
-        .in('estado', ['confirmada', 'pendiente']);
-      if (!error && data) {
+      try {
+        const { reservas: data } = await amenitiesApi.reservasPorFecha(selectedAmenity.id, fechaISOSeleccionada);
         setReservasTurnoDia(data);
-      } else {
+      } catch {
         setReservasTurnoDia([]);
+      } finally {
+        setCargandoTurnos(false);
       }
-      setCargandoTurnos(false);
     };
 
     cargarTurnosDia();
@@ -340,8 +297,12 @@ export function AmenitiesScreen() {
         text: 'Sí',
         style: 'destructive',
         onPress: async () => {
-          await supabase.from('reservas').update({ estado: 'cancelada' }).eq('id', reserva.id);
-          fetchMisReservas();
+          try {
+            await amenitiesApi.cancelar(reserva.id);
+            fetchMisReservas();
+          } catch (e: any) {
+            Alert.alert('Error', e.message ?? 'No se pudo cancelar la reserva');
+          }
         },
       },
     ]);
@@ -386,13 +347,10 @@ export function AmenitiesScreen() {
       )}
       <View style={styles.amenityInfo}>
         <Text style={styles.amenityHorario}>
-          🕐 {item.hora_apertura?.slice(0, 5)} - {item.hora_cierre?.slice(0, 5)}
-        </Text>
-        <Text style={styles.amenityDias}>
-          {item.dias_disponibles?.map((d) => DIAS[d])?.join(', ')}
+          🕐 {item.horaApertura?.slice(0, 5)} - {item.horaCierre?.slice(0, 5)}
         </Text>
       </View>
-      {item.requiere_aprobacion && (
+      {item.requiereAprobacion && (
         <Text style={styles.requiereAprobacion}>⚠️ Requiere aprobación del admin</Text>
       )}
       <View style={styles.amenityActions}>
@@ -404,19 +362,20 @@ export function AmenitiesScreen() {
     </View>
   );
 
-  const renderReserva = ({ item }: { item: Reserva & { amenity_nombre?: string } }) => {
+  const renderReserva = ({ item }: { item: Reserva }) => {
     const permiteCancelar = puedeCancelarReserva(item);
     const esCancelable = item.estado === 'confirmada' || item.estado === 'pendiente';
+    const amenityNombre = amenities.find(a => a.id === item.amenityId)?.nombre ?? '';
     return (
       <View style={styles.reservaCard}>
         <View style={styles.reservaHeader}>
-          <Text style={styles.reservaNombre}>{item.amenity_nombre}</Text>
+          <Text style={styles.reservaNombre}>{amenityNombre}</Text>
           <View style={[styles.estadoBadge, { backgroundColor: getEstadoColor(item.estado) }]}>
             <Text style={styles.estadoText}>{item.estado}</Text>
           </View>
         </View>
         <Text style={styles.reservaFecha}>
-          📅 {item.fecha} • 🕐 {item.hora_inicio?.slice(0, 5)} - {item.hora_fin?.slice(0, 5)}
+          📅 {item.fecha} • 🕐 {item.horaInicio?.slice(0, 5)} - {item.horaFin?.slice(0, 5)}
         </Text>
         {item.notas && <Text style={styles.reservaNotas}>{item.notas}</Text>}
         {esCancelable && permiteCancelar && (
@@ -510,21 +469,21 @@ export function AmenitiesScreen() {
               />
             )}
 
-            {selectedAmenity?.turnos_config?.length ? (
+            {selectedAmenity?.turnosConfig?.length ? (
               <View style={{ marginTop: 12 }}>
                 <Text style={styles.label}>Turnos disponibles</Text>
                 {!fechaDate && <Text style={styles.turnosHint}>Seleccioná una fecha para ver los turnos.</Text>}
                 {fechaDate && cargandoTurnos && <ActivityIndicator color="#e94560" style={{ marginVertical: 12 }} />}
                 {fechaDate && !cargandoTurnos && (
                   <View style={{ gap: 8, marginTop: 8 }}>
-                    {selectedAmenity.turnos_config
+                    {selectedAmenity.turnosConfig!
                       .slice()
                       .sort((a, b) => (a.hora_inicio > b.hora_inicio ? 1 : -1))
                       .map((turno) => {
                         const ocupado = reservasTurnoDia.some(
                           (reserva) =>
-                            normalizarHora(reserva.hora_inicio) === normalizarHora(turno.hora_inicio) &&
-                            normalizarHora(reserva.hora_fin) === normalizarHora(turno.hora_fin)
+                            normalizarHora(reserva.horaInicio) === normalizarHora(turno.hora_inicio) &&
+                            normalizarHora(reserva.horaFin) === normalizarHora(turno.hora_fin)
                         );
                         const seleccionado = turnoSeleccionadoId === turno.id;
                         return (
@@ -553,7 +512,7 @@ export function AmenitiesScreen() {
                           </TouchableOpacity>
                         );
                       })}
-                    {selectedAmenity.turnos_config.length === 0 && (
+                    {(selectedAmenity.turnosConfig?.length ?? 0) === 0 && (
                       <Text style={styles.turnosHint}>No hay turnos configurados para este amenity.</Text>
                     )}
                   </View>
@@ -701,7 +660,7 @@ export function AmenitiesScreen() {
                     {reservasSeleccionadas.map((reserva) => (
                       <View key={reserva.id} style={styles.slotCard}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text style={styles.slotHora}>{reserva.hora_inicio?.slice(0, 5)} - {reserva.hora_fin?.slice(0, 5)}</Text>
+                          <Text style={styles.slotHora}>{reserva.horaInicio?.slice(0, 5)} - {reserva.horaFin?.slice(0, 5)}</Text>
                           <View style={[styles.estadoBadge, { backgroundColor: getEstadoColor(reserva.estado) }]}>
                             <Text style={styles.estadoText}>{reserva.estado}</Text>
                           </View>

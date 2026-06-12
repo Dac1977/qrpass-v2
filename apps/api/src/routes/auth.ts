@@ -114,6 +114,16 @@ auth.post('/login', zValidator('json', loginSchema), async (c) => {
   });
 });
 
+// DELETE /auth/account — dar de baja la cuenta propia
+auth.delete('/account', authMiddleware, async (c) => {
+  const { userId } = c.get('user');
+  await prisma.user.update({
+    where: { id: userId },
+    data: { activo: false, email: `deleted_${userId}@deleted.com`, nombre: 'Usuario eliminado', telefono: null },
+  });
+  return c.json({ ok: true });
+});
+
 // GET /auth/me
 auth.get('/me', authMiddleware, async (c) => {
   const { userId } = c.get('user');

@@ -7,13 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { avisosApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
-import { sendPushNotification } from '../../lib/notifications';
 
 const categorias = [
   { id: 'general', label: 'General', icon: 'megaphone-outline' as const },
@@ -29,82 +27,37 @@ export function CrearAvisoScreen({ navigation }: any) {
   const [contenido, setContenido] = useState('');
   const [categoria, setCategoria] = useState('general');
   const [loading, setLoading] = useState(false);
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
 
   const publicarAviso = async () => {
     if (!titulo.trim()) {
-      if (Platform.OS === 'web') {
-        window.alert('El título es obligatorio');
-      } else {
-        Alert.alert('Error', 'El título es obligatorio');
-      }
+      Alert.alert('Error', 'El título es obligatorio');
       return;
     }
-
     if (!contenido.trim()) {
-      if (Platform.OS === 'web') {
-        window.alert('El contenido es obligatorio');
-      } else {
-        Alert.alert('Error', 'El contenido es obligatorio');
-      }
+      Alert.alert('Error', 'El contenido es obligatorio');
       return;
     }
-
-    if (!profile?.barrio_id) {
-      Alert.alert('Error', 'No estás asignado a un barrio');
+    if (!space?.id) {
+      Alert.alert('Error', 'No estás asignado a un espacio');
       return;
     }
 
     setLoading(true);
-
-    const { error } = await supabase.from('avisos').insert({
-      barrio_id: profile.barrio_id,
-      autor_id: profile.id,
-      titulo: titulo.trim(),
-      contenido: contenido.trim(),
-      categoria,
-    });
-
-    if (error) {
-      setLoading(false);
-      console.error('Error creando aviso:', error);
-      Alert.alert('Error', 'No se pudo publicar el aviso');
-      return;
-    }
-
-    const { data: miembros } = await supabase
-      .from('profiles')
-      .select('expo_push_token')
-      .eq('barrio_id', profile.barrio_id)
-      .eq('activo', true)
-      .neq('id', profile.id);
-
-    if (miembros) {
-      const iconos: Record<string, string> = {
-        urgente: '🚨', evento: '📅', perdido: '🔍', venta: '🏷️', servicio: '🔧', general: '📢',
-      };
-      const icono = iconos[categoria] ?? '📢';
-      await Promise.allSettled(
-        miembros
-          .filter(m => m.expo_push_token)
-          .map(m => sendPushNotification(
-            m.expo_push_token!,
-            `${icono} ${titulo.trim()}`,
-            contenido.trim().slice(0, 120),
-            { tipo: 'aviso', categoria },
-          ))
-      );
-    }
-
-    setLoading(false);
-
-    if (Platform.OS === 'web') {
-      window.alert('¡Aviso publicado!');
-      navigation.goBack();
-    } else {
+    try {
+      await avisosApi.crear({
+        spaceId: space.id,
+        titulo: titulo.trim(),
+        contenido: contenido.trim(),
+        importante: categoria === 'urgente',
+      });
       Alert.alert('¡Publicado!', 'Tu aviso ya está visible para todos', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'No se pudo publicar el aviso');
+    } finally {
+      setLoading(false);
     }
   };
 

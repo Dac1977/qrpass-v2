@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,14 +9,12 @@ import {
   Alert,
   Modal,
   TextInput,
-  Image,
   ScrollView,
 } from 'react-native';
-import { supabase, Reclamo } from '../../lib/supabase';
+import { reclamosApi, Reclamo } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 
 const CATEGORIAS = [
   { value: 'mantenimiento', label: '🔧 Mantenimiento', color: '#f59e0b' },
@@ -35,25 +33,22 @@ export function ReclamosScreen() {
   const [titulo, setTitulo] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [categoria, setCategoria] = useState('general');
-  const [fotoUri, setFotoUri] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [tab, setTab] = useState<'mis' | 'barrio'>('barrio');
-  const { profile } = useAuthStore();
+  const { profile, space } = useAuthStore();
 
   const fetchReclamos = async () => {
-    if (!profile?.barrio_id) return;
-    const { data } = await supabase
-      .from('reclamos')
-      .select('*')
-      .eq('barrio_id', profile.barrio_id)
-      .order('created_at', { ascending: false });
-    if (data) setReclamos(data);
+    if (!space?.id) return;
+    try {
+      const { reclamos: data } = await reclamosApi.listarSpace(space.id);
+      setReclamos(data);
+    } catch {
+      // silently ignore
+    }
   };
 
   useFocusEffect(
-    useCallback(() => {
-      fetchReclamos();
-    }, [profile?.barrio_id])
+    useCallback(() => { fetchReclamos(); }, [space?.id])
   );
 
   const onRefresh = async () => {
@@ -62,82 +57,30 @@ export function ReclamosScreen() {
     setRefreshing(false);
   };
 
-  const tomarFoto = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-      allowsEditing: true,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-    }
-  };
-
-  const subirFoto = async (): Promise<string | null> => {
-    if (!fotoUri || !profile?.id) return null;
-
-    try {
-      const ext = fotoUri.split('.').pop() || 'jpg';
-      const fileName = `reclamos/${profile.id}/${Date.now()}.${ext}`;
-
-      const response = await fetch(fotoUri);
-      const blob = await response.blob();
-
-      const { error } = await supabase.storage
-        .from('reclamos')
-        .upload(fileName, blob, { contentType: `image/${ext}` });
-
-      if (error) {
-        // Bucket might not exist, try creating
-        console.error('Upload error:', error);
-        return null;
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('reclamos')
-        .getPublicUrl(fileName);
-
-      return urlData?.publicUrl || null;
-    } catch {
-      return null;
-    }
-  };
-
   const crearReclamo = async () => {
     if (!titulo.trim() || !descripcion.trim()) {
       Alert.alert('Error', 'Completá título y descripción');
       return;
     }
-    if (!profile?.id || !profile?.barrio_id) return;
+    if (!space?.id) return;
 
     setGuardando(true);
     try {
-      let fotoUrl: string | null = null;
-      if (fotoUri) {
-        fotoUrl = await subirFoto();
-      }
-
-      const { error } = await supabase.from('reclamos').insert({
-        barrio_id: profile.barrio_id,
-        vecino_id: profile.id,
+      await reclamosApi.crear({
+        spaceId: space.id,
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
         categoria,
-        foto_url: fotoUrl,
       });
-
-      if (error) throw error;
 
       setShowCrear(false);
       setTitulo('');
       setDescripcion('');
       setCategoria('general');
-      setFotoUri(null);
       fetchReclamos();
       Alert.alert('¡Reclamo enviado!', 'La administración lo revisará pronto.');
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', error.message ?? 'No se pudo enviar el reclamo');
     } finally {
       setGuardando(false);
     }
@@ -157,13 +100,13 @@ export function ReclamosScreen() {
     CATEGORIAS.find((c) => c.value === cat) || CATEGORIAS[5];
 
   const filteredReclamos = tab === 'mis'
-    ? reclamos.filter((r) => r.vecino_id === profile?.id)
+    ? reclamos.filter((r) => r.userId === profile?.id)
     : reclamos;
 
   const renderReclamo = ({ item }: { item: Reclamo }) => {
     const estadoInfo = getEstadoInfo(item.estado);
     const catInfo = getCategoriaInfo(item.categoria);
-    const esMio = item.vecino_id === profile?.id;
+    const esMio = item.userId === profile?.id;
 
     return (
       <View style={styles.reclamoCard}>
@@ -179,20 +122,16 @@ export function ReclamosScreen() {
         <Text style={styles.reclamoTitulo}>{item.titulo}</Text>
         <Text style={styles.reclamoDesc} numberOfLines={3}>{item.descripcion}</Text>
 
-        {item.foto_url && (
-          <Image source={{ uri: item.foto_url }} style={styles.reclamoFoto} />
-        )}
-
-        {item.respuesta_admin && (
+        {item.respuesta && (
           <View style={styles.respuestaBox}>
             <Text style={styles.respuestaLabel}>💬 Respuesta del admin:</Text>
-            <Text style={styles.respuestaText}>{item.respuesta_admin}</Text>
+            <Text style={styles.respuestaText}>{item.respuesta}</Text>
           </View>
         )}
 
         <Text style={styles.reclamoFecha}>
           {esMio ? '📝 Mi reclamo • ' : ''}
-          {new Date(item.created_at).toLocaleDateString('es-AR', {
+          {new Date(item.createdAt).toLocaleDateString('es-AR', {
             day: 'numeric',
             month: 'short',
             hour: '2-digit',
@@ -283,16 +222,6 @@ export function ReclamosScreen() {
                 onChangeText={setDescripcion}
                 multiline
               />
-
-              <TouchableOpacity style={styles.fotoBtn} onPress={tomarFoto}>
-                <Ionicons name="camera" size={20} color="#e94560" />
-                <Text style={styles.fotoBtnText}>
-                  {fotoUri ? 'Cambiar foto' : 'Agregar foto'}
-                </Text>
-              </TouchableOpacity>
-              {fotoUri && (
-                <Image source={{ uri: fotoUri }} style={styles.fotoPreview} />
-              )}
 
               <TouchableOpacity
                 style={[styles.guardarBtn, guardando && { opacity: 0.5 }]}

@@ -11,7 +11,7 @@ import {
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase, Contacto } from '../../lib/supabase';
+import { contactosApi, Contacto } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 
 export function ContactosScreen() {
@@ -27,13 +27,12 @@ export function ContactosScreen() {
   const { profile } = useAuthStore();
 
   const fetchContactos = async () => {
-    const { data } = await supabase
-      .from('contactos')
-      .select('*')
-      .eq('vecino_id', profile?.id)
-      .order('nombre');
-
-    if (data) setContactos(data);
+    try {
+      const { contactos: data } = await contactosApi.listar();
+      setContactos(data.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    } catch {
+      // silently ignore
+    }
   };
 
   useEffect(() => {
@@ -73,27 +72,24 @@ export function ContactosScreen() {
 
     const datos = {
       nombre: nombre.trim(),
-      dni: dni.trim() || null,
-      telefono: telefono.trim() || null,
-      patente: patente.trim().toUpperCase() || null,
-      notas: notas.trim() || null,
+      dni: dni.trim() || undefined,
+      telefono: telefono.trim() || undefined,
+      patente: patente.trim().toUpperCase() || undefined,
+      notas: notas.trim() || undefined,
     };
 
-    if (editingContacto) {
-      await supabase
-        .from('contactos')
-        .update(datos)
-        .eq('id', editingContacto.id);
-    } else {
-      await supabase.from('contactos').insert({
-        ...datos,
-        vecino_id: profile?.id,
-      });
+    try {
+      if (editingContacto) {
+        await contactosApi.actualizar(editingContacto.id, datos);
+      } else {
+        await contactosApi.crear(datos);
+      }
+      setShowModal(false);
+      resetForm();
+      fetchContactos();
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'No se pudo guardar el contacto');
     }
-
-    setShowModal(false);
-    resetForm();
-    fetchContactos();
   };
 
   const eliminarContacto = (contacto: Contacto) => {
@@ -106,7 +102,7 @@ export function ContactosScreen() {
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
-            await supabase.from('contactos').delete().eq('id', contacto.id);
+            try { await contactosApi.eliminar(contacto.id); } catch {}
             fetchContactos();
           },
         },

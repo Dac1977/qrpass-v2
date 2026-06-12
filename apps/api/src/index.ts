@@ -19,6 +19,7 @@ import personalRouter from './routes/personal';
 import invitacionesRouter from './routes/invitaciones';
 import contactosRouter from './routes/contactos';
 import encuestasRouter from './routes/encuestas';
+import terminalesRouter from './routes/terminales';
 
 const app = new Hono();
 
@@ -44,6 +45,7 @@ app.route('/personal', personalRouter);
 app.route('/invitaciones', invitacionesRouter);
 app.route('/contactos', contactosRouter);
 app.route('/encuestas', encuestasRouter);
+app.route('/terminales', terminalesRouter);
 
 const PORT = Number(process.env.PORT) || 3000;
 

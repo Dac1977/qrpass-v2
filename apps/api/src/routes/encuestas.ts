@@ -149,4 +149,22 @@ encuestas.delete('/:id', requireRol('admin', 'super_admin'), async (c) => {
   return c.json({ ok: true });
 });
 
+// PATCH /encuestas/:id — actualizar encuesta (activar/desactivar)
+encuestas.patch(
+  '/:id',
+  requireRol('admin', 'super_admin'),
+  zValidator('json', z.object({ activa: z.boolean().optional() })),
+  async (c) => {
+    const encuesta = await prisma.encuesta.findUnique({ where: { id: c.req.param('id') } });
+    if (!encuesta) return c.json({ error: 'Encuesta no encontrada' }, 404);
+
+    const data = c.req.valid('json');
+    const actualizada = await prisma.encuesta.update({
+      where: { id: encuesta.id },
+      data: { activa: data.activa ?? !encuesta.activa },
+    });
+    return c.json({ encuesta: actualizada });
+  }
+);
+
 export default encuestas;

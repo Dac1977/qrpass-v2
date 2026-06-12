@@ -11,46 +11,34 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { usersApi, User, UserRol } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { AppHeader } from '../../components/AppHeader';
 import { getSpaceLabels } from '../../utils/spaceLabels';
 
-type Usuario = {
-  id: string;
-  email: string;
-  nombre: string | null;
-  rol: 'vecino' | 'guardia' | 'admin';
-  barrio_id: string | null;
-  numero_casa: string | null;
-  telefono: string | null;
-  created_at: string;
-  last_sign_in_at: string | null;
-  estado_aprobacion?: string | null;
-};
+type UsuarioAdmin = User & { numeroUnidad?: string | null; estadoAprobacion?: string };
 
 export function AdminUsuariosScreen() {
   const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
-  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const labels = getSpaceLabels(space?.spaceType);
+  const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [filtroRol, setFiltroRol] = useState<'todos' | 'vecino' | 'guardia' | 'admin'>('todos');
 
   const cargarUsuarios = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
     try {
-      const { data, error } = await supabase.rpc('get_barrio_users', { p_barrio_id: profile.barrio_id });
-      if (error) throw error;
-      setUsuarios((data as Usuario[]) || []);
+      const { users } = await usersApi.listarSpace(space.id);
+      setUsuarios(users);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargarUsuarios(); }, [cargarUsuarios]);
 
@@ -62,7 +50,7 @@ export function AdminUsuariosScreen() {
     const coincideBusqueda = !texto ||
       (u.nombre || '').toLowerCase().includes(texto) ||
       (u.email || '').toLowerCase().includes(texto) ||
-      (u.numero_casa || '').toLowerCase().includes(texto);
+      (u.numeroCasa || '').toLowerCase().includes(texto);
     return coincideRol && coincideBusqueda;
   });
 
@@ -76,8 +64,7 @@ export function AdminUsuariosScreen() {
           text: `Cambiar a ${r.toUpperCase()}`,
           onPress: async () => {
             try {
-              const { error } = await supabase.from('profiles').update({ rol: r }).eq('id', userId);
-              if (error) throw error;
+              await usersApi.actualizar(userId, { rol: r as UserRol });
               cargarUsuarios();
             } catch (err: any) {
               Alert.alert('Error', err.message);
@@ -89,21 +76,8 @@ export function AdminUsuariosScreen() {
     );
   };
 
-  const eliminarUsuario = (userId: string, nombre: string) => {
-    Alert.alert('Eliminar usuario', `¿Eliminar a ${nombre}? Esta acción no se puede deshacer.`, [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Eliminar', style: 'destructive', onPress: async () => {
-          try {
-            const { error } = await supabase.from('profiles').delete().eq('id', userId);
-            if (error) throw error;
-            cargarUsuarios();
-          } catch (err: any) {
-            Alert.alert('Error', err.message);
-          }
-        }
-      }
-    ]);
+  const eliminarUsuario = (_userId: string, nombre: string) => {
+    Alert.alert('No disponible', `La eliminación de ${nombre} no está disponible aún.`);
   };
 
   const rolColor = (rol: string) => {
@@ -168,11 +142,11 @@ export function AdminUsuariosScreen() {
               </View>
               <Text style={styles.userEmail} numberOfLines={1}>{usr.email}</Text>
               <Text style={styles.userMeta} numberOfLines={1}>
-                {usr.numero_casa ? `${labels.unit} ${usr.numero_casa}` : `Sin ${labels.unit.toLowerCase()}`} • 
+                {usr.numeroCasa ? `${labels.unit} ${usr.numeroCasa}` : `Sin ${labels.unit.toLowerCase()}`} • 
                 {usr.telefono ? ` Tel: ${usr.telefono}` : ' Sin teléfono'}
               </Text>
               <Text style={styles.userDate}>
-                Último acceso: {usr.last_sign_in_at ? new Date(usr.last_sign_in_at).toLocaleDateString('es-AR') : 'Nunca'}
+                Registrado: {new Date(usr.createdAt).toLocaleDateString('es-AR')}
               </Text>
             </View>
             <View style={styles.userActions}>

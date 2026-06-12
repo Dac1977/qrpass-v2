@@ -9,7 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { avisosApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { getSpaceLabels } from '../../utils/spaceLabels';
 
@@ -34,8 +34,8 @@ const categoriaColores: Record<string, string> = {
 export function DetalleAvisoScreen({ route, navigation }: any) {
   const { aviso } = route.params;
   const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
-  const isAutor = profile?.id === aviso.autor_id;
+  const labels = getSpaceLabels(space?.spaceType);
+  const isAutor = profile?.id === aviso.autorId;
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -65,14 +65,10 @@ export function DetalleAvisoScreen({ route, navigation }: any) {
 
     if (!confirmar) return;
 
-    const { error } = await supabase
-      .from('avisos')
-      .update({ activo: false })
-      .eq('id', aviso.id);
-
-    if (!error) {
+    try {
+      await avisosApi.eliminar(aviso.id);
       navigation.goBack();
-    }
+    } catch {}
   };
 
   return (
@@ -93,12 +89,12 @@ export function DetalleAvisoScreen({ route, navigation }: any) {
         <View>
           <Text style={styles.autorNombre}>{aviso.autor?.nombre}</Text>
           <Text style={styles.autorCasa}>
-            {aviso.autor?.numero_casa ? `${labels.unit} ${aviso.autor.numero_casa}` : labels.member}
+            {aviso.autor?.numeroCasa ? `${labels.unit} ${aviso.autor.numeroCasa}` : labels.member}
           </Text>
         </View>
       </View>
 
-      <Text style={styles.fecha}>{formatDate(aviso.created_at)}</Text>
+      <Text style={styles.fecha}>{formatDate(aviso.createdAt)}</Text>
 
       <View style={styles.contenidoContainer}>
         <Text style={styles.contenido}>{aviso.contenido}</Text>

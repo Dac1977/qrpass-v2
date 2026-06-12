@@ -14,13 +14,23 @@ import {
   Switch,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, Evento, EventoLink, EventoSolicitud, InvitadoEvento, Contacto } from '../../lib/supabase';
+import { eventosApi, Evento, EventoLink, EventoSolicitud, contactosApi, Contacto } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { nanoid } from 'nanoid/non-secure';
 
-const EVENT_LINK_BASE_URL = process.env.EXPO_PUBLIC_EVENT_LINK_BASE_URL || 'https://barrios.app/evento';
+const EVENT_LINK_BASE_URL = 'https://barrios.app/evento';
+
+type InvitadoEvento = {
+  id: string;
+  eventoId: string;
+  nombre: string;
+  dni: string;
+  qrCode: string;
+  tipo: string;
+  usado: boolean;
+  fechaUso: string | null;
+};
 
 export function DetalleEventoScreen() {
   const route = useRoute<any>();
@@ -47,54 +57,45 @@ export function DetalleEventoScreen() {
   const [contactosLoading, setContactosLoading] = useState(false);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [guardandoContactos, setGuardandoContactos] = useState(false);
-  const { profile } = useAuthStore();
-
+  const { space } = useAuthStore();
   const fetchEvento = async () => {
-    const { data } = await supabase
-      .from('eventos')
-      .select('*')
-      .eq('id', eventoId)
-      .single();
-    if (data) setEvento(data);
+    if (!space?.id) return;
+    try {
+      const { events } = await eventosApi.listar(space.id);
+      const found = events.find((e) => e.id === eventoId) ?? null;
+      setEvento(found);
+    } catch {
+      setEvento(null);
+    }
   };
 
   const fetchInvitados = async () => {
-    const { data } = await supabase
-      .from('invitados_evento')
-      .select('*')
-      .eq('evento_id', eventoId)
-      .order('created_at', { ascending: true });
-    if (data) setInvitados(data);
+    setInvitados([]);
   };
 
   const fetchLink = async () => {
     setLoadingLink(true);
-    const { data } = await supabase
-      .from('evento_links')
-      .select('*')
-      .eq('evento_id', eventoId)
-      .maybeSingle();
-    if (data) {
-      setLink(data);
-      setPermiteAcompanantes(data.permite_acompanantes);
-      setMaxAcompanantes(String(data.max_acompanantes));
-      setRequiereDni(data.requiere_dni);
-      setUsosPorPersona(String(data.usos_por_persona));
-    } else {
-      setLink(null);
+    try {
+      const { links } = await eventosApi.listarLinks(eventoId);
+      setLink(links[0] || null);
+    } catch (error) {
+      console.error('Error fetching link:', error);
+    } finally {
+      setLoadingLink(false);
     }
-    setLoadingLink(false);
   };
 
   const fetchSolicitudes = async () => {
+    if (!link) return;
     setLoadingSolicitudes(true);
-    const { data } = await supabase
-      .from('evento_solicitudes')
-      .select('*')
-      .eq('evento_id', eventoId)
-      .order('created_at', { ascending: false });
-    if (data) setSolicitudes(data as EventoSolicitud[]);
-    setLoadingSolicitudes(false);
+    try {
+      const { solicitudes: data } = await eventosApi.listarSolicitudes(link.id);
+      setSolicitudes(data);
+    } catch (error) {
+      console.error('Error fetching solicitudes:', error);
+    } finally {
+      setLoadingSolicitudes(false);
+    }
   };
 
   useEffect(() => {
@@ -105,15 +106,15 @@ export function DetalleEventoScreen() {
   }, [eventoId]);
 
   const fetchContactos = async () => {
-    if (!profile?.id) return;
     setContactosLoading(true);
-    const { data } = await supabase
-      .from('contactos')
-      .select('*')
-      .eq('vecino_id', profile.id)
-      .order('nombre');
-    if (data) setContactos(data);
-    setContactosLoading(false);
+    try {
+      const { contactos: data } = await contactosApi.listar();
+      setContactos(data.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    } catch {
+      setContactos([]);
+    } finally {
+      setContactosLoading(false);
+    }
   };
 
   const abrirContactos = () => {
@@ -138,94 +139,27 @@ export function DetalleEventoScreen() {
     });
   };
 
-  const confirmarContactos = async () => {
-    const seleccionados = contactos.filter(c => selectedContactIds.has(c.id));
-    if (seleccionados.length === 0) {
-      setShowContactos(false);
-      return;
-    }
-    // Filter out contacts already invited (by DNI)
-    const dniExistentes = new Set(invitados.map(i => i.dni));
-    const nuevos = seleccionados.filter(c => !c.dni || !dniExistentes.has(c.dni));
-    if (nuevos.length === 0) {
-      Alert.alert('Info', 'Todos los contactos seleccionados ya están invitados.');
-      setShowContactos(false);
-      return;
-    }
-    setGuardandoContactos(true);
-    try {
-      const rows = nuevos.map(c => ({
-        evento_id: eventoId,
-        nombre: c.nombre,
-        dni: c.dni || '',
-        qr_code: `EVT-${nanoid(20)}`,
-        tipo: 'contacto' as const,
-      }));
-      const { error } = await supabase.from('invitados_evento').insert(rows);
-      if (error) throw error;
-      setShowContactos(false);
-      fetchInvitados();
-      Alert.alert('Listo', `Se agregaron ${nuevos.length} invitado${nuevos.length !== 1 ? 's' : ''} desde contactos.`);
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setGuardandoContactos(false);
-    }
+  const confirmarContactos = () => {
+    Alert.alert('Próximamente', 'La gestión de invitados desde contactos estará disponible pronto.');
+    setShowContactos(false);
   };
 
-  const agregarInvitado = async () => {
-    if (!nuevoNombre.trim() || !nuevoDni.trim()) {
-      Alert.alert('Error', 'Completá nombre y DNI');
-      return;
-    }
-    if (invitados.some((i) => i.dni === nuevoDni.trim())) {
-      Alert.alert('Error', 'Ya existe un invitado con ese DNI');
-      return;
-    }
-
-    setGuardando(true);
-    try {
-      const { error } = await supabase.from('invitados_evento').insert({
-        evento_id: eventoId,
-        nombre: nuevoNombre.trim(),
-        dni: nuevoDni.trim(),
-        qr_code: `EVT-${nanoid(20)}`,
-      });
-
-      if (error) throw error;
-
-      setNuevoNombre('');
-      setNuevoDni('');
-      setShowAgregar(false);
-      fetchInvitados();
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setGuardando(false);
-    }
+  const agregarInvitado = () => {
+    Alert.alert('Próximamente', 'La adición manual de invitados estará disponible pronto.');
+    setShowAgregar(false);
   };
 
   const eliminarInvitado = (inv: InvitadoEvento) => {
-    Alert.alert('Eliminar invitado', `¿Eliminar a ${inv.nombre}?`, [
-      { text: 'No', style: 'cancel' },
-      {
-        text: 'Sí',
-        style: 'destructive',
-        onPress: async () => {
-          await supabase.from('invitados_evento').delete().eq('id', inv.id);
-          fetchInvitados();
-        },
-      },
-    ]);
+    Alert.alert('Próximamente', `La eliminación de ${inv.nombre} estará disponible pronto.`);
   };
 
   const compartirQR = async (inv: InvitadoEvento) => {
     const mensaje = `🎉 ¡Estás invitado!\n\n` +
       `📋 Evento: ${evento?.nombre}\n` +
-      `📅 Fecha: ${formatFecha(evento?.fecha_evento || '')}\n` +
+      `📅 Fecha: ${formatFecha(evento?.fechaEvento || '')}\n` +
       `👤 Invitado: ${inv.nombre}\n` +
       `🆔 DNI: ${inv.dni}\n\n` +
-      `🔑 Tu código QR de acceso:\n${inv.qr_code}\n\n` +
+      `🔑 Tu código QR de acceso:\n${inv.qrCode}\n\n` +
       `Mostrá este código en la guardia del barrio para ingresar.`;
 
     if (Platform.OS === 'web') {
@@ -246,10 +180,10 @@ export function DetalleEventoScreen() {
     const mensaje = encodeURIComponent(
       `🎉 ¡Estás invitado!\n\n` +
       `📋 Evento: ${evento?.nombre}\n` +
-      `📅 Fecha: ${formatFecha(evento?.fecha_evento || '')}\n` +
+      `📅 Fecha: ${formatFecha(evento?.fechaEvento || '')}\n` +
       `👤 Invitado: ${inv.nombre}\n` +
       `🆔 DNI: ${inv.dni}\n\n` +
-      `🔑 Tu código QR de acceso:\n${inv.qr_code}\n\n` +
+      `🔑 Tu código QR de acceso:\n${inv.qrCode}\n\n` +
       `Mostrá este código en la guardia del barrio para ingresar.`
     );
 
@@ -263,24 +197,20 @@ export function DetalleEventoScreen() {
   };
 
   const generarLink = async () => {
-    if (!evento?.id) return;
-    const usos = parseInt(usosPorPersona, 10);
-    const acompanantes = parseInt(maxAcompanantes, 10);
     setGenerandoLink(true);
     try {
-      const { data, error } = await supabase.rpc('generar_evento_link', {
-        p_evento_id: evento.id,
-        p_permite_acompanantes: permiteAcompanantes,
-        p_max_acompanantes: isNaN(acompanantes) ? 0 : acompanantes,
-        p_requiere_dni: requiereDni,
-        p_usos_por_persona: isNaN(usos) ? 1 : Math.max(1, usos),
+      const { link: newLink } = await eventosApi.crearLink(eventoId, {
+        permiteAcompanantes,
+        maxAcompanantes: parseInt(maxAcompanantes) || 0,
+        requiereDni,
+        usosPorPersona: parseInt(usosPorPersona) || 1,
       });
-      if (error) throw error;
-      setLink(data as EventoLink);
+      setLink(newLink);
       setConfigModal(false);
-      Alert.alert('Link actualizado', 'Compartí el enlace con tus invitados.');
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo generar el link');
+      Alert.alert('Éxito', 'Link generado correctamente');
+    } catch (error) {
+      console.error('Error generando link:', error);
+      Alert.alert('Error', 'No se pudo generar el link');
     } finally {
       setGenerandoLink(false);
     }
@@ -296,26 +226,23 @@ export function DetalleEventoScreen() {
 
   const toggleLink = async (habilitado: boolean) => {
     if (!link) return;
-    setLoadingLink(true);
-    await supabase
-      .from('evento_links')
-      .update({ habilitado, updated_at: new Date().toISOString() })
-      .eq('id', link.id);
-    await fetchLink();
+    try {
+      const { link: updated } = await eventosApi.actualizarLink(link.id, { habilitado: !habilitado });
+      setLink(updated);
+    } catch (error) {
+      console.error('Error toggling link:', error);
+      Alert.alert('Error', 'No se pudo actualizar el link');
+    }
   };
 
   const resolverSolicitud = async (solicitud: EventoSolicitud, estado: 'aceptada' | 'rechazada') => {
     setResolviendo(solicitud.id);
     try {
-      const { error } = await supabase.rpc('resolver_evento_solicitud', {
-        p_solicitud_id: solicitud.id,
-        p_estado: estado,
-        p_usos_permitidos: solicitud.usos_permitidos,
-      });
-      if (error) throw error;
-      await Promise.all([fetchSolicitudes(), fetchInvitados()]);
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo actualizar la solicitud');
+      await eventosApi.actualizarSolicitud(solicitud.id, { estado });
+      fetchSolicitudes();
+    } catch (error) {
+      console.error('Error resolviendo solicitud:', error);
+      Alert.alert('Error', 'No se pudo resolver la solicitud');
     } finally {
       setResolviendo(null);
     }
@@ -352,9 +279,9 @@ export function DetalleEventoScreen() {
           )}
         </View>
         <Text style={styles.invDni}>DNI: {item.dni}</Text>
-        {item.fecha_uso && (
+        {item.fechaUso && (
           <Text style={styles.invFechaUso}>
-            Ingresó: {new Date(item.fecha_uso).toLocaleString('es-AR')}
+            Ingresó: {new Date(item.fechaUso).toLocaleString('es-AR')}
           </Text>
         )}
       </View>
@@ -406,7 +333,7 @@ export function DetalleEventoScreen() {
       {item.acompanantes > 0 && (
         <Text style={styles.solicitudDato}>Acompañantes: {item.acompanantes}</Text>
       )}
-      <Text style={styles.solicitudQr}>QR: {item.qr_code}</Text>
+      <Text style={styles.solicitudQr}>QR: {item.qrCode}</Text>
       {item.estado === 'pendiente' && (
         <View style={styles.solicitudActions}>
           <TouchableOpacity
@@ -451,7 +378,7 @@ export function DetalleEventoScreen() {
           <>
             <View style={styles.eventoInfo}>
               <Text style={styles.eventoNombre}>{evento.nombre}</Text>
-              <Text style={styles.eventoFecha}>📅 {formatFecha(evento.fecha_evento)}</Text>
+              <Text style={styles.eventoFecha}>📅 {formatFecha(evento.fechaEvento)}</Text>
               {evento.descripcion && <Text style={styles.eventoDesc}>{evento.descripcion}</Text>}
               <View style={styles.statsRow}>
                 <View style={styles.stat}>
@@ -478,11 +405,11 @@ export function DetalleEventoScreen() {
                 <>
                   <Text style={styles.linkText}>{linkUrl}</Text>
                   <View style={styles.linkBadges}>
-                    <Text style={styles.linkBadge}>Usos/persona: {link.usos_por_persona}</Text>
+                    <Text style={styles.linkBadge}>Usos/persona: {link.usosPorPersona}</Text>
                     <Text style={styles.linkBadge}>
-                      Acompañantes: {link.permite_acompanantes ? link.max_acompanantes : 0}
+                      Acompañantes: {link.permiteAcompanantes ? link.maxAcompanantes : 0}
                     </Text>
-                    <Text style={styles.linkBadge}>Requiere DNI: {link.requiere_dni ? 'Sí' : 'No'}</Text>
+                    <Text style={styles.linkBadge}>Requiere DNI: {link.requiereDni ? 'Sí' : 'No'}</Text>
                   </View>
                   <View style={styles.linkActions}>
                     <TouchableOpacity style={styles.secondaryBtn} onPress={shareLink}>

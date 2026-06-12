@@ -47,6 +47,79 @@ invitaciones.get('/:id', async (c) => {
   return c.json({ invitacion: inv });
 });
 
+// GET /invitaciones/space/:spaceId/buscar — búsqueda manual para guardia
+invitaciones.get(
+  '/space/:spaceId/buscar',
+  requireRol('guardia', 'admin', 'super_admin'),
+  async (c) => {
+    const spaceId = c.req.param('spaceId');
+    const query = c.req.query('q')?.toLowerCase();
+
+    if (!query) {
+      return c.json({ resultados: [] });
+    }
+
+    // Buscar en invitaciones
+    const invitaciones = await prisma.invitacion.findMany({
+      where: {
+        spaceId,
+        activo: true,
+        OR: [
+          { nombre: { contains: query, mode: 'insensitive' } },
+          { dni: { contains: query, mode: 'insensitive' } },
+          { patente: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      take: 20,
+    });
+
+    // Buscar en usuarios registrados
+    const usuarios = await prisma.user.findMany({
+      where: {
+        memberships: {
+          some: {
+            spaceId,
+            activo: true,
+            estadoAprobacion: 'aprobado',
+          },
+        },
+        OR: [
+          { nombre: { contains: query, mode: 'insensitive' } },
+          { email: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        numeroCasa: true,
+      },
+      take: 20,
+    });
+
+    return c.json({
+      resultados: [
+        ...invitaciones.map((inv) => ({
+          id: inv.id,
+          tipo: 'invitacion',
+          nombre: inv.nombre,
+          dni: inv.dni,
+          patente: inv.patente,
+          qrCode: inv.qrCode,
+        })),
+        ...usuarios.map((u) => ({
+          id: u.id,
+          tipo: 'usuario',
+          nombre: u.nombre,
+          email: u.email,
+          numeroCasa: u.numeroCasa,
+          qrCode: u.qrCode,
+        })),
+      ],
+    });
+  }
+);
+
 // POST /invitaciones — crear invitación
 invitaciones.post('/', zValidator('json', crearInvitacionSchema), async (c) => {
   const { userId } = c.get('user');

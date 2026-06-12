@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authMiddleware, requireRol } from '../middleware/auth';
+import { sendPushNotification } from '../lib/push';
 
 const accesos = new Hono();
 
@@ -49,6 +50,20 @@ accesos.post(
       const ingreso = await prisma.ingreso.create({
         data: { userId: usuario.id, spaceId, tipo, metodo, autorizado: true, registradoPor: guardiaId },
       });
+
+      // Enviar notificación al vecino
+      const userWithToken = await prisma.user.findUnique({
+        where: { id: usuario.id },
+        select: { expoPushToken: true },
+      });
+      if (userWithToken?.expoPushToken) {
+        await sendPushNotification([userWithToken.expoPushToken], {
+          title: '✅ Ingreso autorizado',
+          body: `Ingreso registrado al barrio`,
+          data: { tipo: 'vecino', nombre: usuario.nombre },
+        });
+      }
+
       return c.json({ autorizado: true, tipo_acceso: 'vecino', ingreso: { id: ingreso.id, tipo: ingreso.tipo, createdAt: ingreso.createdAt }, usuario: { id: usuario.id, nombre: usuario.nombre, numeroCasa: usuario.numeroCasa } });
     }
 
@@ -72,6 +87,20 @@ accesos.post(
       const ingreso = await prisma.ingreso.create({
         data: { userId: invitacion.vecinoId, spaceId, tipo, metodo, autorizado: true, registradoPor: guardiaId, invitacionId: invitacion.id },
       });
+
+      // Enviar notificación al vecino que creó la invitación
+      const vecinoWithToken = await prisma.user.findUnique({
+        where: { id: invitacion.vecinoId },
+        select: { expoPushToken: true },
+      });
+      if (vecinoWithToken?.expoPushToken) {
+        await sendPushNotification([vecinoWithToken.expoPushToken], {
+          title: '✅ Ingreso autorizado',
+          body: `${invitacion.nombre} ingresó al barrio`,
+          data: { tipo: invitacion.tipo, nombre: invitacion.nombre },
+        });
+      }
+
       return c.json({ autorizado: true, tipo_acceso: invitacion.tipo, ingreso: { id: ingreso.id, tipo: ingreso.tipo, createdAt: ingreso.createdAt }, usuario: { nombre: invitacion.nombre, dni: invitacion.dni, patente: invitacion.patente } });
     }
 
@@ -93,6 +122,26 @@ accesos.post(
       const ingreso = await prisma.ingreso.create({
         data: { userId: personalItem.vecinoId, spaceId, tipo, metodo, autorizado: true, registradoPor: guardiaId, personalId: personalItem.id },
       });
+
+      // Enviar notificación a todos los vecinos con permisos para este personal
+      const permisos = await prisma.permisoHorario.findMany({
+        where: { personalId: personalItem.id, activo: true },
+        select: { vecinoId: true },
+      });
+      const vecinoIds = [...new Set(permisos.map((p) => p.vecinoId))];
+      const vecinos = await prisma.user.findMany({
+        where: { id: { in: vecinoIds } },
+        select: { expoPushToken: true },
+      });
+      const tokens = vecinos.map((v) => v.expoPushToken).filter((t): t is string => t !== null);
+      if (tokens.length > 0) {
+        await sendPushNotification(tokens, {
+          title: '🏠 Personal ingresó',
+          body: `${personalItem.nombre} ingresó al barrio`,
+          data: { tipo: 'personal', nombre: personalItem.nombre },
+        });
+      }
+
       return c.json({ autorizado: true, tipo_acceso: 'personal', ingreso: { id: ingreso.id, tipo: ingreso.tipo, createdAt: ingreso.createdAt }, usuario: { nombre: personalItem.nombre, dni: personalItem.dni, tipo: personalItem.tipo } });
     }
 
@@ -156,6 +205,34 @@ accesos.get(
       page: Number(page),
       totalPages: Math.ceil(total / Number(limit)),
     });
+  }
+);
+
+// PATCH /accesos/:id/salida — registrar salida de un ingreso
+accesos.patch(
+  '/:id/salida',
+  requireRol('guardia', 'admin', 'super_admin'),
+  async (c) => {
+    const ingresoId = c.req.param('id');
+
+    const ingreso = await prisma.ingreso.findUnique({
+      where: { id: ingresoId },
+    });
+
+    if (!ingreso) {
+      return c.json({ error: 'Ingreso no encontrado' }, 404);
+    }
+
+    if (ingreso.salidaAt) {
+      return c.json({ error: 'Este ingreso ya tiene salida registrada' }, 400);
+    }
+
+    const ingresoActualizado = await prisma.ingreso.update({
+      where: { id: ingresoId },
+      data: { salidaAt: new Date() },
+    });
+
+    return c.json({ ingreso: ingresoActualizado });
   }
 );
 

@@ -7,15 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  Image,
-  Platform,
   ActivityIndicator,
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { supabase, PersonalPermanente, PermisoHorario } from '../../lib/supabase';
-import { useAuthStore } from '../../store/authStore';
+import { personalApi, PersonalPermanente } from '../../lib/api';
 
 const DIAS_SEMANA = [
   { value: 1, label: 'Lunes', short: 'L' },
@@ -37,19 +33,12 @@ const INTERVALOS = Array.from({ length: 96 }, (_, i) => {
 
 export function EditarPersonalScreen({ route, navigation }: any) {
   const { personalId } = route.params;
-  const { profile } = useAuthStore();
 
   const [personal, setPersonal] = useState<PersonalPermanente | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Datos editables del personal
   const [nombre, setNombre] = useState('');
-  const [telefono, setTelefono] = useState('');
-  const [fotoUri, setFotoUri] = useState<string | null>(null);
-  const [fotoChanged, setFotoChanged] = useState(false);
-
-  // Horarios por día
   const [horariosPorDia, setHorariosPorDia] = useState<Record<number, HorarioDia>>({});
   const [timePicker, setTimePicker] = useState<{ dia: number; campo: 'entrada' | 'salida' } | null>(null);
 
@@ -59,43 +48,26 @@ export function EditarPersonalScreen({ route, navigation }: any) {
 
   const fetchData = async () => {
     setLoading(true);
-
-    const [{ data: personalData }, { data: horariosData }] = await Promise.all([
-      supabase
-        .from('personal_permanente')
-        .select('*')
-        .eq('id', personalId)
-        .single(),
-      supabase
-        .from('permisos_horarios')
-        .select('*')
-        .eq('personal_id', personalId)
-        .eq('vecino_id', profile?.id)
-        .eq('activo', true)
-        .order('dia_semana'),
-    ]);
-
-    if (personalData) {
-      const p = personalData as PersonalPermanente;
-      setPersonal(p);
-      setNombre(p.nombre);
-      setTelefono(p.telefono || '');
-      setFotoUri(p.foto_url || null);
+    try {
+      const { personal: todos } = await personalApi.mis();
+      const found = todos.find((p) => p.id === personalId) ?? null;
+      if (found) {
+        setPersonal(found);
+        setNombre(found.nombre);
+        const map: Record<number, HorarioDia> = {};
+        found.permisos.forEach((x) => {
+          map[x.diaSemana] = {
+            entrada: x.horaEntrada || '08:00:00',
+            salida: x.horaSalida || '17:00:00',
+          };
+        });
+        setHorariosPorDia(map);
+      }
+    } catch {
+      setPersonal(null);
+    } finally {
+      setLoading(false);
     }
-
-    if (horariosData && horariosData.length > 0) {
-      const h = horariosData as PermisoHorario[];
-      const map: Record<number, HorarioDia> = {};
-      h.forEach((x) => {
-        map[x.dia_semana] = {
-          entrada: x.hora_entrada || '08:00:00',
-          salida: x.hora_salida || '17:00:00',
-        };
-      });
-      setHorariosPorDia(map);
-    }
-
-    setLoading(false);
   };
 
   const toggleDia = (dia: number) => {
@@ -124,74 +96,6 @@ export function EditarPersonalScreen({ route, navigation }: any) {
     }));
   };
 
-  const elegirFoto = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Necesitamos acceso a la galería.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-      setFotoChanged(true);
-    }
-  };
-
-  const tomarFoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Necesitamos acceso a la cámara.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-      setFotoChanged(true);
-    }
-  };
-
-  const subirFoto = async (): Promise<string | null> => {
-    if (!fotoUri || !fotoChanged) return fotoUri;
-    if (fotoUri.startsWith('http')) return fotoUri;
-
-    try {
-      const response = await fetch(fotoUri);
-      const blob = await response.blob();
-      const arrayBuffer = await new Response(blob).arrayBuffer();
-      const filePath = `${profile?.barrio_id}/${personalId}.jpg`;
-
-      const { error } = await supabase.storage
-        .from('fotos-personal')
-        .upload(filePath, arrayBuffer, {
-          contentType: 'image/jpeg',
-          upsert: true,
-        });
-
-      if (error) {
-        console.error('Error subiendo foto:', error);
-        return personal?.foto_url || null;
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('fotos-personal')
-        .getPublicUrl(filePath);
-
-      return urlData.publicUrl + '?t=' + Date.now();
-    } catch (err) {
-      console.error('Error procesando foto:', err);
-      return personal?.foto_url || null;
-    }
-  };
-
   const guardar = async () => {
     if (!nombre.trim()) {
       Alert.alert('Datos requeridos', 'El nombre es obligatorio.');
@@ -202,65 +106,25 @@ export function EditarPersonalScreen({ route, navigation }: any) {
       Alert.alert('Horarios requeridos', 'Seleccioná al menos un día de la semana.');
       return;
     }
-    if (!profile?.id || !personal) return;
+    if (!personal) return;
 
     setSaving(true);
-
     try {
-      // 1. Actualizar datos del personal
-      const updateData: any = {
-        nombre: nombre.trim(),
-        telefono: telefono.trim() || null,
-      };
-
-      if (fotoChanged) {
-        const nuevaFotoUrl = await subirFoto();
-        if (nuevaFotoUrl) {
-          updateData.foto_url = nuevaFotoUrl;
-        }
-      }
-
-      const { error: updateError } = await supabase
-        .from('personal_permanente')
-        .update(updateData)
-        .eq('id', personalId);
-
-      if (updateError) throw updateError;
-
-      // 2. Eliminar horarios actuales y crear nuevos
-      const { error: deleteError } = await supabase
-        .from('permisos_horarios')
-        .delete()
-        .eq('personal_id', personalId)
-        .eq('vecino_id', profile.id);
-
-      if (deleteError) throw deleteError;
-
-      const nuevosPermisos = diasSeleccionados.map((dia) => ({
-        personal_id: personalId,
-        vecino_id: profile.id,
-        dia_semana: dia,
-        hora_entrada: horariosPorDia[dia].entrada,
-        hora_salida: horariosPorDia[dia].salida,
+      const permisos = diasSeleccionados.map((dia) => ({
+        diaSemana: dia,
+        horaEntrada: horariosPorDia[dia].entrada,
+        horaSalida: horariosPorDia[dia].salida,
       }));
 
-      const { error: insertError } = await supabase
-        .from('permisos_horarios')
-        .insert(nuevosPermisos);
+      await personalApi.actualizar(personalId, {
+        nombre: nombre.trim(),
+        permisos,
+      });
 
-      if (insertError) throw insertError;
-
-      const msg = 'Los datos y horarios se actualizaron correctamente.';
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-      } else {
-        Alert.alert('Listo', msg);
-      }
-
+      Alert.alert('Listo', 'Los datos y horarios se actualizaron correctamente.');
       navigation.goBack();
     } catch (error: any) {
-      console.error('Error guardando cambios:', error);
-      Alert.alert('Error', 'No se pudieron guardar los cambios. Intentá de nuevo.');
+      Alert.alert('Error', error?.message ?? 'No se pudieron guardar los cambios.');
     } finally {
       setSaving(false);
     }
@@ -286,39 +150,6 @@ export function EditarPersonalScreen({ route, navigation }: any) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Foto */}
-      <View style={styles.section}>
-        <Text style={styles.label}>Foto</Text>
-        {fotoUri ? (
-          <View style={styles.fotoContainer}>
-            <Image source={{ uri: fotoUri }} style={styles.fotoPreview} />
-            <View style={styles.fotoActions}>
-              <TouchableOpacity style={styles.fotoActionBtn} onPress={elegirFoto}>
-                <Ionicons name="images-outline" size={18} color="#38bdf8" />
-                <Text style={styles.fotoActionText}>Cambiar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.fotoActionBtn} onPress={() => { setFotoUri(null); setFotoChanged(true); }}>
-                <Ionicons name="trash-outline" size={18} color="#ef4444" />
-                <Text style={[styles.fotoActionText, { color: '#ef4444' }]}>Quitar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.fotoButtons}>
-            <TouchableOpacity style={styles.fotoBtn} onPress={elegirFoto}>
-              <Ionicons name="images-outline" size={28} color="#38bdf8" />
-              <Text style={styles.fotoBtnText}>Galería</Text>
-            </TouchableOpacity>
-            {Platform.OS !== 'web' && (
-              <TouchableOpacity style={styles.fotoBtn} onPress={tomarFoto}>
-                <Ionicons name="camera-outline" size={28} color="#38bdf8" />
-                <Text style={styles.fotoBtnText}>Cámara</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-      </View>
-
       {/* Nombre */}
       <View style={styles.section}>
         <Text style={styles.label}>Nombre completo</Text>

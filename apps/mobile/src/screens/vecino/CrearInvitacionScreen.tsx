@@ -9,20 +9,11 @@ import {
   Alert,
   Modal,
   FlatList,
-  Image,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { supabase, Contacto } from '../../lib/supabase';
+import { contactosApi, invitacionesApi, Contacto } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
-import { nanoid } from 'nanoid/non-secure';
-
-const getUserId = async (): Promise<string | null> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  return user?.id || null;
-};
 
 type DuracionOption = {
   label: string;
@@ -48,87 +39,18 @@ export function CrearInvitacionScreen({ navigation }: any) {
   const [contactos, setContactos] = useState<Contacto[]>([]);
   const [showContactos, setShowContactos] = useState(false);
   const [guardarContacto, setGuardarContacto] = useState(false);
-  const [fotoUri, setFotoUri] = useState<string | null>(null);
-  const { profile } = useAuthStore();
+  const { profile, space } = useAuthStore();
 
   useEffect(() => {
     fetchContactos();
   }, []);
 
   const fetchContactos = async () => {
-    const { data } = await supabase
-      .from('contactos')
-      .select('*')
-      .eq('vecino_id', profile?.id)
-      .order('nombre');
-
-    if (data) setContactos(data);
-  };
-
-  const elegirFoto = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Necesitamos acceso a la galería para seleccionar una foto.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-      base64: true,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-    }
-  };
-
-  const tomarFoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Necesitamos acceso a la cámara para tomar una foto.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-      base64: true,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-    }
-  };
-
-  const subirFoto = async (userId: string, invitacionId: string): Promise<string | null> => {
-    if (!fotoUri) return null;
     try {
-      const response = await fetch(fotoUri);
-      const blob = await response.blob();
-      const arrayBuffer = await new Response(blob).arrayBuffer();
-      const fileExt = 'jpg';
-      const filePath = `${userId}/${invitacionId}.${fileExt}`;
-
-      const { error } = await supabase.storage
-        .from('fotos-invitados')
-        .upload(filePath, arrayBuffer, {
-          contentType: 'image/jpeg',
-          upsert: true,
-        });
-
-      if (error) {
-        console.error('Error subiendo foto:', error);
-        return null;
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('fotos-invitados')
-        .getPublicUrl(filePath);
-
-      return urlData.publicUrl;
-    } catch (err) {
-      console.error('Error procesando foto:', err);
-      return null;
+      const { contactos: data } = await contactosApi.listar();
+      setContactos(data.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    } catch {
+      // silently ignore
     }
   };
 
@@ -142,83 +64,35 @@ export function CrearInvitacionScreen({ navigation }: any) {
 
   const crearInvitacion = async () => {
     const nombreTrimmed = nombre.trim();
-    
     if (!nombreTrimmed) {
       Alert.alert('Error', 'El nombre del invitado es obligatorio');
       return;
     }
+    if (!space?.id) {
+      Alert.alert('Error', 'No hay espacio activo');
+      return;
+    }
 
     setLoading(true);
-
     try {
-      const userId = await getUserId();
-      
-      if (!userId) {
-        Alert.alert('Error', 'No se pudo obtener tu sesión. Intentá cerrar sesión y volver a entrar.');
-        setLoading(false);
-        return;
+      if (guardarContacto && !contactos.find(c => c.nombre === nombreTrimmed)) {
+        await contactosApi.crear({
+          nombre: nombreTrimmed,
+          dni: dni.trim() || undefined,
+          telefono: telefono.trim() || undefined,
+          patente: patente.trim().toUpperCase() || undefined,
+        });
       }
 
-      const qrCode = nanoid(16);
-      const validoHasta = new Date();
-      validoHasta.setHours(validoHasta.getHours() + duracion.horas);
-      
-      console.log('Creando invitación con:', {
-        vecino_id: userId,
-        nombre_invitado: nombreTrimmed,
-        qr_code: qrCode,
-        valido_hasta: validoHasta.toISOString(),
+      const { invitacion } = await invitacionesApi.crear({
+        spaceId: space.id,
+        nombre: nombreTrimmed,
+        dni: dni.trim() || undefined,
+        telefono: telefono.trim() || undefined,
+        patente: patente.trim().toUpperCase() || undefined,
+        usosMaximos: usos,
+        horasVigencia: duracion.horas,
       });
-
-      // Si debe guardar contacto, primero lo guarda
-      let contactoId = null;
-      if (guardarContacto && !contactos.find(c => c.nombre === nombre)) {
-        const { data: nuevoContacto } = await supabase
-          .from('contactos')
-          .insert({
-            vecino_id: userId,
-            nombre: nombre.trim(),
-            dni: dni.trim() || null,
-            telefono: telefono.trim() || null,
-            patente: patente.trim().toUpperCase() || null,
-          })
-          .select()
-          .single();
-
-        contactoId = nuevoContacto?.id;
-      }
-
-      const { data: invitacion, error } = await supabase
-        .from('invitaciones')
-        .insert({
-          vecino_id: userId,
-          contacto_id: contactoId,
-          nombre_invitado: nombre.trim(),
-          dni_invitado: dni.trim() || null,
-          telefono_invitado: telefono.trim() || null,
-          patente: patente.trim().toUpperCase() || null,
-          qr_code: qrCode,
-          valido_hasta: validoHasta.toISOString(),
-          usos_permitidos: usos,
-        })
-        .select()
-        .single();
-
-      console.log('Invitacion creada:', { invitacion, error });
-
-      if (error) throw error;
-
-      // Subir foto si existe
-      if (fotoUri && invitacion) {
-        const fotoUrl = await subirFoto(userId, invitacion.id);
-        if (fotoUrl) {
-          await supabase
-            .from('invitaciones')
-            .update({ foto_invitado_url: fotoUrl })
-            .eq('id', invitacion.id);
-          invitacion.foto_invitado_url = fotoUrl;
-        }
-      }
 
       Alert.alert(
         '¡Invitación creada!',
@@ -226,7 +100,7 @@ export function CrearInvitacionScreen({ navigation }: any) {
         [{ text: 'Ver QR', onPress: () => navigation.navigate('DetalleInvitacion', { invitacion }) }]
       );
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', error.message ?? 'No se pudo crear la invitación');
     } finally {
       setLoading(false);
     }
@@ -291,31 +165,6 @@ export function CrearInvitacionScreen({ navigation }: any) {
           onChangeText={setPatente}
           autoCapitalize="characters"
         />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.label}>Foto del invitado (opcional)</Text>
-        {fotoUri ? (
-          <View style={styles.fotoPreviewContainer}>
-            <Image source={{ uri: fotoUri }} style={styles.fotoPreview} />
-            <TouchableOpacity style={styles.fotoRemoveButton} onPress={() => setFotoUri(null)}>
-              <Ionicons name="close-circle" size={28} color="#ef4444" />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.fotoButtonsRow}>
-            <TouchableOpacity style={styles.fotoButton} onPress={elegirFoto}>
-              <Ionicons name="images-outline" size={28} color="#38bdf8" />
-              <Text style={styles.fotoButtonText}>Galería</Text>
-            </TouchableOpacity>
-            {Platform.OS !== 'web' && (
-              <TouchableOpacity style={styles.fotoButton} onPress={tomarFoto}>
-                <Ionicons name="camera-outline" size={28} color="#38bdf8" />
-                <Text style={styles.fotoButtonText}>Cámara</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
       </View>
 
       <View style={styles.section}>

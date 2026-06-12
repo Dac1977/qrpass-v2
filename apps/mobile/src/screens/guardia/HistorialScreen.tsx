@@ -6,63 +6,38 @@ import {
   FlatList,
   RefreshControl,
 } from 'react-native';
-import { supabase } from '../../lib/supabase';
+import { accesosApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 
 type Ingreso = {
   id: string;
-  nombre_visitante: string;
-  dni_visitante: string | null;
-  casa_destino: string | null;
+  nombreVisitante: string;
+  dniVisitante: string | null;
+  casaDestino: string | null;
   tipo: string;
   estado: string;
-  created_at: string;
+  createdAt: string;
 };
 
 export function HistorialScreen() {
   const [ingresos, setIngresos] = useState<Ingreso[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
 
   const fetchIngresos = async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
 
-    const { data, error } = await supabase
-      .from('ingresos')
-      .select('*')
-      .eq('barrio_id', profile.barrio_id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (!error && data) {
-      setIngresos(data);
+    try {
+      const data = await accesosApi.historial(space.id, 50);
+      setIngresos((data as any)?.accesos || data || []);
+    } catch (error) {
+      console.error('Error fetching ingresos:', error);
     }
   };
 
   useEffect(() => {
     fetchIngresos();
-
-    // Suscribirse a nuevos ingresos
-    const channel = supabase
-      .channel('ingresos_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'ingresos',
-          filter: `barrio_id=eq.${profile?.barrio_id}`,
-        },
-        (payload) => {
-          setIngresos((prev) => [payload.new as Ingreso, ...prev]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -103,17 +78,17 @@ export function HistorialScreen() {
     <View style={styles.item}>
       <View style={[styles.estadoIndicator, { backgroundColor: getEstadoColor(item.estado) }]} />
       <View style={styles.itemContent}>
-        <Text style={styles.nombre} numberOfLines={1}>{item.nombre_visitante}</Text>
+        <Text style={styles.nombre} numberOfLines={1}>{item.nombreVisitante}</Text>
         <Text style={styles.detalle}>
-          {item.casa_destino ? `Casa ${item.casa_destino}` : 'Sin destino'} • {item.tipo}
+          {item.casaDestino ? `Casa ${item.casaDestino}` : 'Sin destino'} • {item.tipo}
         </Text>
-        {item.dni_visitante && (
-          <Text style={styles.dni}>DNI: {item.dni_visitante}</Text>
+        {item.dniVisitante && (
+          <Text style={styles.dni}>DNI: {item.dniVisitante}</Text>
         )}
       </View>
       <View style={styles.timeContainer}>
-        <Text style={styles.time}>{formatTime(item.created_at)}</Text>
-        <Text style={styles.date}>{formatDate(item.created_at)}</Text>
+        <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
+        <Text style={styles.date}>{formatDate(item.createdAt)}</Text>
       </View>
     </View>
   );

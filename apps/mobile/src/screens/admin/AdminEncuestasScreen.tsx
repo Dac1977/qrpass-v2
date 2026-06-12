@@ -4,58 +4,63 @@ import {
   ActivityIndicator, RefreshControl, Alert, TextInput, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { encuestasApi, Encuesta } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigation } from '@react-navigation/native';
 import { AppHeader } from '../../components/AppHeader';
 
 export function AdminEncuestasScreen() {
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const navigation = useNavigation();
-  const [encuestas, setEncuestas] = useState<any[]>([]);
+  const [encuestas, setEncuestas] = useState<Encuesta[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ titulo: '', descripcion: '', opciones: ['', ''], multiple: false });
 
   const cargar = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
     try {
-      const { data } = await supabase.from('encuestas').select('*')
-        .eq('barrio_id', profile.barrio_id).order('created_at', { ascending: false });
-      setEncuestas(data || []);
+      const { encuestas: data } = await encuestasApi.listar(space.id);
+      setEncuestas(data);
     } catch (err) { console.error(err); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargar(); }, [cargar]);
   const onRefresh = () => { setRefreshing(true); cargar(); };
 
   const crearEncuesta = async () => {
-    if (!profile?.barrio_id || !profile?.id || !form.titulo.trim()) {
-      Alert.alert('Error', 'Ingresá un título'); return;
+    if (!space?.id || !form.titulo.trim() || form.opciones.some(o => !o.trim())) {
+      Alert.alert('Error', 'Completá el título y al menos 2 opciones');
+      return;
     }
-    const opcsFiltradas = form.opciones.filter(o => o.trim());
-    if (opcsFiltradas.length < 2) { Alert.alert('Error', 'Agregá al menos 2 opciones'); return; }
     try {
-      const { error } = await supabase.from('encuestas').insert({
-        barrio_id: profile.barrio_id,
-        autor_id: profile.id,
+      await encuestasApi.crear({
+        spaceId: space.id,
         titulo: form.titulo.trim(),
-        descripcion: form.descripcion.trim() || null,
-        opciones: opcsFiltradas,
+        descripcion: form.descripcion.trim() || undefined,
+        opciones: form.opciones.map(o => o.trim()),
         multiple: form.multiple,
       });
-      if (error) throw error;
       setShowModal(false);
       setForm({ titulo: '', descripcion: '', opciones: ['', ''], multiple: false });
       cargar();
-    } catch (err: any) { Alert.alert('Error', err.message); }
+      Alert.alert('Éxito', 'Encuesta creada correctamente');
+    } catch (error) {
+      console.error('Error creando encuesta:', error);
+      Alert.alert('Error', 'No se pudo crear la encuesta');
+    }
   };
 
   const toggleEncuesta = async (id: string, activa: boolean) => {
-    await supabase.from('encuestas').update({ activa: !activa }).eq('id', id);
-    cargar();
+    try {
+      await encuestasApi.actualizar(id, { activa: !activa });
+      cargar();
+    } catch (error) {
+      console.error('Error toggling encuesta:', error);
+      Alert.alert('Error', 'No se pudo actualizar la encuesta');
+    }
   };
 
   const agregarOpcion = () => setForm({ ...form, opciones: [...form.opciones, ''] });
@@ -97,7 +102,7 @@ export function AdminEncuestasScreen() {
               <Text style={s.cardMeta}>
                 {Array.isArray(enc.opciones) ? `${enc.opciones.length} opciones` : ''} • 
                 {enc.multiple ? ' Múltiple' : ' Simple'} • 
-                Creada: {new Date(enc.created_at).toLocaleDateString('es-AR')}
+                Creada: {new Date(enc.createdAt).toLocaleDateString('es-AR')}
               </Text>
               {Array.isArray(enc.opciones) && (
                 <View style={s.opcionesPreview}>

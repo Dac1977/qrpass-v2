@@ -13,11 +13,10 @@ import {
   FlatList,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, Contacto } from '../../lib/supabase';
+import { eventosApi, contactosApi, Contacto } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { nanoid } from 'nanoid/non-secure';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { AppHeader } from '../../components/AppHeader';
 
@@ -43,19 +42,19 @@ export function CrearEventoScreen() {
   const [contactos, setContactos] = useState<Contacto[]>([]);
   const [contactosLoading, setContactosLoading] = useState(false);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const navigation = useNavigation<any>();
 
   const fetchContactos = async () => {
-    if (!profile?.id) return;
     setContactosLoading(true);
-    const { data } = await supabase
-      .from('contactos')
-      .select('*')
-      .eq('vecino_id', profile.id)
-      .order('nombre');
-    if (data) setContactos(data);
-    setContactosLoading(false);
+    try {
+      const { contactos: data } = await contactosApi.listar();
+      setContactos(data.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    } catch {
+      setContactos([]);
+    } finally {
+      setContactosLoading(false);
+    }
   };
 
   const abrirContactos = () => {
@@ -143,7 +142,7 @@ export function CrearEventoScreen() {
       Alert.alert('Error', 'Seleccioná la hora del evento');
       return;
     }
-    if (!profile?.id || !profile?.barrio_id) return;
+    if (!space?.id) return;
 
     // Combinar fecha + hora
     const fechaFinal = new Date(fechaDate);
@@ -151,35 +150,13 @@ export function CrearEventoScreen() {
 
     setGuardando(true);
     try {
-      // Crear evento
-      const { data: evento, error: eventoError } = await supabase
-        .from('eventos')
-        .insert({
-          vecino_id: profile.id,
-          barrio_id: profile.barrio_id,
-          nombre: nombre.trim(),
-          descripcion: descripcion.trim() || null,
-          fecha_evento: fechaFinal.toISOString(),
-        })
-        .select()
-        .single();
-
-      if (eventoError) throw eventoError;
-
-      // Crear invitados con QR único (si hay)
-      if (invitados.length > 0) {
-        const invitadosData = invitados.map((inv) => ({
-          evento_id: evento.id,
-          nombre: inv.nombre,
-          dni: inv.dni,
-          qr_code: `EVT-${nanoid(20)}`,
-          tipo: inv.tipo,
-        }));
-
-        const { error: invError } = await supabase.from('invitados_evento').insert(invitadosData);
-
-        if (invError) throw invError;
-      }
+      const { event } = await eventosApi.crear({
+        spaceId: space.id,
+        nombre: nombre.trim(),
+        descripcion: descripcion.trim() || undefined,
+        fechaEvento: fechaFinal.toISOString(),
+        invitados: invitados.map((inv) => ({ nombre: inv.nombre, dni: inv.dni, tipo: inv.tipo })),
+      });
 
       const msg = invitados.length > 0
         ? `Se crearon ${invitados.length} invitaciones con QR único. Podés compartirlas o generar un link público.`
@@ -192,7 +169,7 @@ export function CrearEventoScreen() {
           {
             text: 'Ver evento',
             onPress: () => {
-              navigation.replace('DetalleEvento', { eventoId: evento.id });
+              navigation.replace('DetalleEvento', { eventoId: event.id });
             },
           },
         ]

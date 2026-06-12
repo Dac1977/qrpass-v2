@@ -9,30 +9,25 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import { supabase, Invitacion } from '../../lib/supabase';
+import { invitacionesApi, Invitacion } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { AppHeader } from '../../components/AppHeader';
 
 export function HomeScreen({ navigation }: any) {
   const [invitaciones, setInvitaciones] = useState<Invitacion[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [barrioNombre, setBarrioNombre] = useState<string | null>(null);
-  const [qrCode, setQrCode] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
-  const { profile, fetchProfile, space } = useAuthStore();
-  const permiteInvitaciones = !space?.space_type || space.space_type === 'residential' || space.space_type === 'club';
+  const { profile, space } = useAuthStore();
+  const permiteInvitaciones = !space?.spaceType || space.spaceType === 'residential' || space.spaceType === 'club';
 
   const fetchInvitaciones = async () => {
-    const { data, error } = await supabase
-      .from('invitaciones')
-      .select('*')
-      .eq('vecino_id', profile?.id)
-      .eq('activo', true)
-      .gte('valido_hasta', new Date().toISOString())
-      .order('created_at', { ascending: false });
-
-    if (!error && data) {
-      setInvitaciones(data);
+    if (!space?.id) return;
+    try {
+      const { invitaciones: data } = await invitacionesApi.mis(space.id);
+      const now = new Date().toISOString();
+      setInvitaciones(data.filter(i => i.activo && (!i.fechaVence || i.fechaVence >= now)));
+    } catch {
+      // silently ignore
     }
   };
 
@@ -40,39 +35,6 @@ export function HomeScreen({ navigation }: any) {
     fetchInvitaciones();
   }, []);
 
-  useEffect(() => {
-    const loadQr = async () => {
-      if (!profile?.id) return;
-      if (profile.qr_code) { setQrCode(profile.qr_code); return; }
-      const { data } = await supabase.rpc('obtener_o_generar_qr_miembro', { p_user_id: profile.id });
-      if (data) {
-        setQrCode(data as string);
-        fetchProfile();
-      }
-    };
-    loadQr();
-  }, [profile?.id]);
-
-  useEffect(() => {
-    const fetchBarrio = async () => {
-      if (!profile?.barrio_id) {
-        setBarrioNombre(null);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('barrios')
-        .select('nombre')
-        .eq('id', profile.barrio_id)
-        .maybeSingle();
-
-      if (!error && data) {
-        setBarrioNombre(data.nombre ?? null);
-      }
-    };
-
-    fetchBarrio();
-  }, [profile?.barrio_id]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -96,12 +58,12 @@ export function HomeScreen({ navigation }: any) {
       onPress={() => navigation.navigate('DetalleInvitacion', { invitacion: item })}
     >
       <View style={styles.invitacionContent}>
-        <Text style={styles.invitadoNombre} numberOfLines={1}>{item.nombre_invitado}</Text>
+        <Text style={styles.invitadoNombre} numberOfLines={1}>{item.nombre}</Text>
         <Text style={styles.invitadoDetalle}>
-          Válido hasta: {formatDate(item.valido_hasta)}
+          {item.fechaVence ? `Válido hasta: ${formatDate(item.fechaVence)}` : 'Sin vencimiento'}
         </Text>
         <Text style={styles.usosText}>
-          Usos: {item.usos_actuales}/{item.usos_permitidos}
+          Usos: {item.usosActuales}/{item.usosMaximos}
         </Text>
       </View>
       <View style={styles.qrIndicator}>
@@ -115,8 +77,8 @@ export function HomeScreen({ navigation }: any) {
       <AppHeader title="Inicio" />
       <View style={styles.header}>
         <Text style={styles.greeting}>Hola, {profile?.nombre?.split(' ')[0]}</Text>
-        {barrioNombre && <Text style={styles.barrio}>{barrioNombre}</Text>}
-        {profile?.numero_casa && <Text style={styles.casa}>Unidad {profile.numero_casa}</Text>}
+        {space?.nombre && <Text style={styles.barrio}>{space.nombre}</Text>}
+        {profile?.numeroCasa && <Text style={styles.casa}>Unidad {profile.numeroCasa}</Text>}
       </View>
 
       {/* QR de acceso del miembro */}
@@ -127,10 +89,10 @@ export function HomeScreen({ navigation }: any) {
         </View>
         <Ionicons name={showQr ? 'chevron-up' : 'chevron-down'} size={20} color="#3b82f6" />
       </TouchableOpacity>
-      {showQr && qrCode && (
+      {showQr && profile?.qrCode && (
         <View style={styles.qrExpanded}>
           <View style={styles.qrBox}>
-            <QRCode value={qrCode} size={180} backgroundColor="#ffffff" color="#0f172a" />
+            <QRCode value={profile!.qrCode!} size={180} backgroundColor="#ffffff" color="#0f172a" />
           </View>
           <Text style={styles.qrHint}>Mostrá este código en la entrada</Text>
         </View>

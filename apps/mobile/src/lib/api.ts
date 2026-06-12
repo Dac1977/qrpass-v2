@@ -81,6 +81,26 @@ export type Space = {
   organizationId: string | null;
   codigoInvitacion: string | null;
   activo: boolean;
+  registrarSalidas: boolean;
+  createdAt: string;
+};
+
+export type Terminal = {
+  id: string;
+  spaceId: string;
+  nombre: string;
+  activo: boolean;
+  createdAt: string;
+  gates: Gate[];
+};
+
+export type Gate = {
+  id: string;
+  terminalId: string;
+  nombre: string;
+  tipo: 'IN' | 'OUT' | 'BOTH';
+  activo: boolean;
+  orden: number;
   createdAt: string;
 };
 
@@ -109,12 +129,14 @@ export type Aviso = {
 
 export type Expensa = {
   id: string;
+  userId: string;
   spaceId: string;
-  periodo: string;
-  descripcion: string;
+  mes: number;
+  anio: number;
   monto: number;
-  fechaVencimiento: string | null;
-  activo: boolean;
+  estado: 'pendiente' | 'pagada';
+  fechaVenc: string | null;
+  fechaPago: string | null;
   createdAt: string;
 };
 
@@ -240,6 +262,7 @@ export type PersonalPermanente = {
   vecinoId: string;
   nombre: string;
   dni: string | null;
+  telefono: string | null;
   foto: string | null;
   tipo: string;
   qrCode: string;
@@ -283,6 +306,7 @@ export type Contacto = {
   telefono: string | null;
   patente: string | null;
   foto: string | null;
+  notas: string | null;
   createdAt: string;
 };
 
@@ -334,6 +358,8 @@ export const authApi = {
 
   updatePushToken: (token: string) =>
     apiFetch('/users/me/push-token', { method: 'PATCH', body: JSON.stringify({ expoPushToken: token }) }),
+  deleteAccount: () =>
+    apiFetch('/auth/account', { method: 'DELETE' }),
 };
 
 // ─── Spaces ───────────────────────────────────────────────────────────────────
@@ -341,10 +367,14 @@ export const authApi = {
 export const spacesApi = {
   getMemberships: () => apiFetch<{ memberships: Membership[] }>('/spaces/mis-memberships'),
   getSpace: (id: string) => apiFetch<{ space: Space }>(`/spaces/${id}`),
+  actualizar: (id: string, data: Partial<Space>) =>
+    apiFetch<{ space: Space }>(`/spaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   byCode: (codigo: string) =>
     apiFetch<{ space: { id: string; nombre: string; spaceType: SpaceType } }>(`/spaces/by-code/${codigo.toUpperCase()}`),
   join: (codigoInvitacion: string, numeroUnidad?: string) =>
     apiFetch('/spaces/join', { method: 'POST', body: JSON.stringify({ codigoInvitacion, numeroUnidad }) }),
+  crearParaUsuario: (data: { nombre: string; spaceType: string; direccion?: string }) =>
+    apiFetch<{ space: Space & { codigoInvitacion: string } }>('/spaces/para-usuario', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // ─── Avisos ───────────────────────────────────────────────────────────────────
@@ -361,22 +391,37 @@ export const avisosApi = {
 // ─── Expensas ─────────────────────────────────────────────────────────────────
 
 export const expensasApi = {
-  listar: (spaceId: string) => apiFetch<{ expensas: Expensa[] }>(`/expensas/space/${spaceId}`),
-  misPagos: (expensaId: string) => apiFetch<{ pagos: Pago[] }>(`/expensas/${expensaId}/mis-pagos`),
-  registrarPago: (expensaId: string, data: { monto: number; metodoPago: string; comprobanteUrl?: string; observaciones?: string }) =>
-    apiFetch<{ pago: Pago }>(`/expensas/${expensaId}/pagar`, { method: 'POST', body: JSON.stringify(data) }),
+  listarMias: () => apiFetch<{ expensas: Expensa[] }>('/expensas/mis-expensas'),
+  listarSpace: (spaceId: string, params?: { mes?: number; anio?: number; estado?: string }) => {
+    const q = new URLSearchParams(params as any).toString();
+    return apiFetch<{ expensas: Expensa[] }>(`/expensas/space/${spaceId}${q ? `?${q}` : ''}`);
+  },
+  pagar: (id: string) => apiFetch<{ expensa: Expensa }>(`/expensas/${id}/pagar`, { method: 'PATCH' }),
+  actualizar: (id: string, data: { estado?: string }) =>
+    apiFetch<{ expensa: Expensa }>(`/expensas/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  generar: (data: { spaceId: string; mes: number; anio: number; monto: number; fechaVenc?: string }) =>
+    apiFetch<{ creadas: number }>('/expensas/generar', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // ─── Amenities / Reservas ─────────────────────────────────────────────────────
 
 export const amenitiesApi = {
   listar: (spaceId: string) => apiFetch<{ amenities: Amenity[] }>(`/amenities/space/${spaceId}`),
+  crear: (data: { spaceId: string; nombre: string; descripcion?: string; capacidad?: number; horaApertura: string; horaCierre: string; requiereAprobacion?: boolean; precioReserva?: number; turnosConfig?: any[]; activo?: boolean }) =>
+    apiFetch<{ amenity: Amenity }>('/amenities', { method: 'POST', body: JSON.stringify(data) }),
+  actualizar: (id: string, data: Partial<Amenity>) =>
+    apiFetch<{ amenity: Amenity }>(`/amenities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  toggle: (id: string, activo?: boolean) =>
+    apiFetch<{ amenity: Amenity }>(`/amenities/${id}/toggle`, { method: 'PATCH', body: JSON.stringify({ activo }) }),
   misReservas: () => apiFetch<{ reservas: Reserva[] }>('/reservas/mis'),
+  reservasSpace: (spaceId: string) => apiFetch<{ reservas: Reserva[] }>(`/reservas/space/${spaceId}`),
   reservasPorFecha: (amenityId: string, fecha: string) =>
     apiFetch<{ reservas: Reserva[] }>(`/reservas/amenity/${amenityId}?fecha=${fecha}`),
-  crear: (data: { amenityId: string; spaceId: string; fecha: string; horaInicio: string; horaFin: string; notas?: string }) =>
+  crearReserva: (data: { amenityId: string; spaceId: string; fecha: string; horaInicio: string; horaFin: string; notas?: string }) =>
     apiFetch<{ reserva: Reserva }>('/reservas', { method: 'POST', body: JSON.stringify(data) }),
-  cancelar: (id: string) => apiFetch(`/reservas/${id}`, { method: 'DELETE' }),
+  actualizarReserva: (id: string, data: { estado?: string; estadoPago?: string; comprobante?: string }) =>
+    apiFetch<{ reserva: Reserva }>(`/reservas/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  cancelarReserva: (id: string) => apiFetch(`/reservas/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Eventos ──────────────────────────────────────────────────────────────────
@@ -385,8 +430,18 @@ export const eventosApi = {
   listar: (spaceId: string) => apiFetch<{ events: Evento[] }>(`/events/space/${spaceId}`),
   crear: (data: { spaceId: string; nombre: string; descripcion?: string; fechaEvento: string }) =>
     apiFetch<{ event: Evento }>('/events', { method: 'POST', body: JSON.stringify(data) }),
-  crearLink: (eventoId: string, data: object) =>
+  actualizar: (id: string, data: { activo?: boolean }) =>
+    apiFetch<{ event: Evento }>(`/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  listarLinks: (eventoId: string) =>
+    apiFetch<{ links: EventoLink[] }>(`/events/${eventoId}/links`),
+  crearLink: (eventoId: string, data: { permiteAcompanantes?: boolean; maxAcompanantes?: number; requiereDni?: boolean; usosPorPersona?: number }) =>
     apiFetch<{ link: EventoLink }>(`/events/${eventoId}/links`, { method: 'POST', body: JSON.stringify(data) }),
+  actualizarLink: (linkId: string, data: { habilitado?: boolean }) =>
+    apiFetch<{ link: EventoLink }>(`/events/links/${linkId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  listarSolicitudes: (linkId: string) =>
+    apiFetch<{ solicitudes: EventoSolicitud[] }>(`/events/links/${linkId}/solicitudes`),
+  actualizarSolicitud: (solicitudId: string, data: { estado: 'aceptada' | 'rechazada' }) =>
+    apiFetch<{ solicitud: EventoSolicitud }>(`/events/solicitudes/${solicitudId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   solicitarAcceso: (token: string, data: object) =>
     apiFetch<{ solicitud: EventoSolicitud }>(`/events/solicitudes/${token}`, { method: 'POST', body: JSON.stringify(data) }),
 };
@@ -430,6 +485,8 @@ export const personalApi = {
 export const invitacionesApi = {
   mis: (spaceId?: string) =>
     apiFetch<{ invitaciones: Invitacion[] }>(`/invitaciones/mis${spaceId ? `?spaceId=${spaceId}` : ''}`),
+  buscar: (spaceId: string, query: string) =>
+    apiFetch<{ resultados: any[] }>(`/invitaciones/space/${spaceId}/buscar?q=${encodeURIComponent(query)}`),
   crear: (data: {
     spaceId: string;
     nombre: string;
@@ -458,6 +515,12 @@ export const contactosApi = {
 
 export const encuestasApi = {
   listar: (spaceId: string) => apiFetch<{ encuestas: Encuesta[] }>(`/encuestas/space/${spaceId}`),
+  crear: (data: { spaceId: string; titulo: string; descripcion?: string; opciones: string[]; multiple?: boolean; fechaCierre?: string }) =>
+    apiFetch<{ encuesta: Encuesta }>('/encuestas', { method: 'POST', body: JSON.stringify(data) }),
+  actualizar: (id: string, data: { activa?: boolean }) =>
+    apiFetch<{ encuesta: Encuesta }>(`/encuestas/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  eliminar: (id: string) =>
+    apiFetch(`/encuestas/${id}`, { method: 'DELETE' }),
   votar: (id: string, opciones: number[]) =>
     apiFetch<{ voto: Voto }>(`/encuestas/${id}/votar`, { method: 'POST', body: JSON.stringify({ opciones }) }),
 };
@@ -470,6 +533,27 @@ export const accesosApi = {
   historial: (spaceId: string, limit = 50) =>
     apiFetch(`/accesos/space/${spaceId}?limit=${limit}`),
   misIngresos: () => apiFetch('/accesos/mis-ingresos'),
+  registrarSalida: (ingresoId: string) =>
+    apiFetch<{ ingreso: any }>(`/accesos/${ingresoId}/salida`, { method: 'PATCH' }),
+};
+
+// ─── Terminales ───────────────────────────────────────────────────────────────
+
+export const terminalesApi = {
+  listarSpace: (spaceId: string) =>
+    apiFetch<{ terminales: Terminal[] }>(`/terminales/space/${spaceId}`),
+  crear: (data: { spaceId: string; nombre: string }) =>
+    apiFetch<{ terminal: Terminal }>('/terminales', { method: 'POST', body: JSON.stringify(data) }),
+  actualizar: (id: string, data: Partial<Terminal>) =>
+    apiFetch<{ terminal: Terminal }>(`/terminales/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  eliminar: (id: string) =>
+    apiFetch(`/terminales/${id}`, { method: 'DELETE' }),
+  crearGate: (data: { terminalId: string; nombre: string; tipo: 'IN' | 'OUT' | 'BOTH' }) =>
+    apiFetch<{ gate: Gate }>('/terminales/gates', { method: 'POST', body: JSON.stringify(data) }),
+  actualizarGate: (id: string, data: Partial<Gate>) =>
+    apiFetch<{ gate: Gate }>(`/terminales/gates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  eliminarGate: (id: string) =>
+    apiFetch(`/terminales/gates/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Alertas ──────────────────────────────────────────────────────────────────
@@ -484,9 +568,14 @@ export const alertasApi = {
 // ─── Users (admin) ────────────────────────────────────────────────────────────
 
 export const usersApi = {
-  listarSpace: (spaceId: string) => apiFetch<{ users: User[] }>(`/users/space/${spaceId}`),
+  listarSpace: (spaceId: string, params?: { rol?: string; estado?: string; search?: string }) => {
+    const q = new URLSearchParams(params as any).toString();
+    return apiFetch<{ users: (User & { numeroUnidad?: string | null; estadoAprobacion?: string })[] }>(`/spaces/${spaceId}/users${q ? `?${q}` : ''}`);
+  },
   aprobar: (userId: string, spaceId: string) =>
-    apiFetch(`/users/${userId}/approve`, { method: 'PATCH', body: JSON.stringify({ spaceId }) }),
+    apiFetch(`/spaces/${spaceId}/members/${userId}/approve`, { method: 'PATCH' }),
+  rechazar: (userId: string, spaceId: string) =>
+    apiFetch(`/spaces/${spaceId}/members/${userId}/reject`, { method: 'PATCH' }),
   actualizar: (userId: string, data: Partial<User>) =>
     apiFetch<{ user: User }>(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify(data) }),
 };

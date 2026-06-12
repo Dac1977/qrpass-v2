@@ -26,7 +26,9 @@ const createSpaceSchema = z.object({
   precioPorCasa: z.number().optional(),
 });
 
-const updateSpaceSchema = createSpaceSchema.partial().omit({ organizationId: true });
+const updateSpaceSchema = createSpaceSchema.partial().omit({ organizationId: true }).extend({
+  registrarSalidas: z.boolean().optional(),
+});
 
 // GET /spaces — lista spaces del usuario o todos si super_admin
 spaces.get('/', async (c) => {
@@ -110,6 +112,69 @@ spaces.get('/:id/members', async (c) => {
   });
   return c.json({ members });
 });
+
+// GET /users/space/:id — lista usuarios de un space (admin/guardia)
+spaces.get('/:id/users', requireRol('guardia', 'admin', 'super_admin'), async (c) => {
+  const spaceId = c.req.param('id');
+  const { rol, estado, search } = c.req.query();
+
+  const memberships = await prisma.membership.findMany({
+    where: {
+      spaceId,
+      ...(rol ? { rol } : {}),
+      ...(estado ? { estadoAprobacion: estado } : {}),
+    },
+    include: {
+      user: {
+        select: { id: true, email: true, nombre: true, telefono: true, numeroCasa: true, activo: true, qrCode: true },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const users = memberships
+    .map((m) => ({
+      ...m.user,
+      rol: m.rol,
+      numeroUnidad: m.numeroUnidad,
+      estadoAprobacion: m.estadoAprobacion,
+      activo: m.activo,
+      membershipId: m.id,
+    }))
+    .filter((u) => !search || u.nombre.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
+
+  return c.json({ users });
+});
+
+// POST /spaces/para-usuario — crear espacio en la org del admin autenticado
+spaces.post(
+  '/para-usuario',
+  requireRol('admin', 'super_admin'),
+  zValidator('json', z.object({
+    nombre: z.string().min(1),
+    spaceType: z.enum(['residential', 'gym', 'club', 'coworking', 'event', 'other']).default('residential'),
+    direccion: z.string().optional(),
+  })),
+  async (c) => {
+    const { userId } = c.get('user');
+    const { nombre, spaceType, direccion } = c.req.valid('json');
+
+    const membership = await prisma.membership.findFirst({
+      where: { userId, rol: { in: ['admin', 'super_admin'] }, activo: true },
+      include: { space: { select: { organizationId: true } } },
+    });
+    if (!membership?.space.organizationId) return c.json({ error: 'No tenés organización asociada' }, 400);
+
+    const codigoInvitacion = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const space = await prisma.space.create({
+      data: { nombre, spaceType, direccion, organizationId: membership.space.organizationId, codigoInvitacion },
+    });
+    await prisma.membership.create({
+      data: { userId, spaceId: space.id, rol: 'admin', estadoAprobacion: 'aprobado', activo: true },
+    });
+    return c.json({ space: { ...space, codigoInvitacion } }, 201);
+  }
+);
 
 // GET /spaces/mis-memberships — memberships del usuario autenticado
 spaces.get('/mis-memberships', async (c) => {

@@ -14,9 +14,8 @@ import {
 import { Camera, useCameraDevice, useCameraPermission, useFrameProcessor } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets } from 'react-native-worklets-core';
-import { supabase, ValidacionQR } from '../../lib/supabase';
+import { accesosApi, ValidacionQR, invitacionesApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
-import { sendPushNotification } from '../../lib/notifications';
 import { abrirBarrera, type BarrierConfig } from '../../lib/barrierControl';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -36,7 +35,7 @@ export function ScannerScreen() {
   const [showManual, setShowManual] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   const [resultadosBusqueda, setResultadosBusqueda] = useState<any[]>([]);
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const [faceDetectionActive, setFaceDetectionActive] = useState(false);
@@ -59,35 +58,13 @@ export function ScannerScreen() {
 
   // Cargar configuración de barrera y reconocimiento facial
   useEffect(() => {
-    if (!profile?.barrio_id) return;
-    
-    supabase
-      .from('configuracion_barrera')
-      .select('*')
-      .eq('barrio_id', profile.barrio_id)
-      .single()
-      .then(({ data }) => {
-        if (data) {
-          setBarrierConfig({
-            habilitado: data.habilitado,
-            tipo: data.tipo,
-            ip_relay: data.ip_relay,
-            puerto_relay: data.puerto_relay || 80,
-            endpoint_abrir: data.endpoint_abrir || '/relay/on',
-            tiempo_abierto_ms: data.tiempo_abierto_ms || 5000,
-            nombre: data.nombre || 'Barrera',
-          });
-        }
-      });
-    supabase.from('barrios').select('habilitar_reconocimiento_facial, registrar_salidas').eq('id', profile.barrio_id).single().then(({ data }) => {
-      if (data) {
-        setHabilitarReconocimientoFacial(data.habilitar_reconocimiento_facial || false);
-        setRegistrarSalidas(data.registrar_salidas || false);
-      }
-    });
-    supabase.from('puntos_acceso').select('id, nombre, tipo').eq('barrio_id', profile.barrio_id).eq('activo', true).order('orden')
-      .then(({ data }) => { if (data?.length) setGates(data); });
-  }, [profile?.barrio_id]);
+    if (!space?.id) return;
+    // Stub: configuración de barrera, reconocimiento facial y gates no están en la API aún
+    setBarrierConfig(null);
+    setHabilitarReconocimientoFacial(false);
+    setRegistrarSalidas(false);
+    setGates([]);
+  }, [space?.id]);
 
   const { detectFaces } = useFaceDetector({
     performanceMode: 'fast',
@@ -159,63 +136,50 @@ export function ScannerScreen() {
 
   const registrarSalida = async (idOverride?: string) => {
     const id = idOverride ?? ingresoAbiertoRef.current;
-    if (!id || !profile?.barrio_id) { resetScanner(); return; }
+    if (!id) {
+      resetScanner();
+      return;
+    }
     if (salidaTimerRef.current) { clearTimeout(salidaTimerRef.current); salidaTimerRef.current = null; }
     if (salidaCountRef.current) { clearInterval(salidaCountRef.current); salidaCountRef.current = null; }
-    await supabase.from('ingresos').update({ salida_at: new Date().toISOString() }).eq('id', id);
-    ingresoAbiertoRef.current = null;
-    setShowSalidaModal(false);
-    setEstado('autorizado');
-    setResultado(prev => prev ? { ...prev, mensaje: 'Salida registrada ✓' } : prev);
-    timeoutRef.current = setTimeout(resetScanner, 3000);
+    try {
+      await accesosApi.registrarSalida(id);
+      ingresoAbiertoRef.current = null;
+      setShowSalidaModal(false);
+      setEstado('autorizado');
+      setResultado(prev => prev ? { ...prev, mensaje: 'Salida registrada ✓' } : prev);
+      timeoutRef.current = setTimeout(resetScanner, 3000);
+    } catch (error) {
+      console.error('Error registrando salida:', error);
+      Alert.alert('Error', 'No se pudo registrar la salida');
+      resetScanner();
+    }
   };
 
   const corregirSalida = async () => {
-    if (!ingresoIdCorregir || !profile?.barrio_id) { resetScanner(); return; }
-    await supabase.from('ingresos').update({ salida_at: new Date().toISOString() }).eq('id', ingresoIdCorregir);
-    setShowCorregirSalidaModal(false);
-    setEstado('autorizado');
-    setResultado(prev => prev ? { ...prev, mensaje: 'Hora de salida actualizada ✓' } : prev);
-    timeoutRef.current = setTimeout(resetScanner, 3000);
+    if (!ingresoIdCorregir) {
+      resetScanner();
+      return;
+    }
+    try {
+      await accesosApi.registrarSalida(ingresoIdCorregir);
+      setShowCorregirSalidaModal(false);
+      setEstado('autorizado');
+      setResultado(prev => prev ? { ...prev, mensaje: 'Hora de salida actualizada ✓' } : prev);
+      timeoutRef.current = setTimeout(resetScanner, 3000);
+    } catch (error) {
+      console.error('Error corrigiendo salida:', error);
+      Alert.alert('Error', 'No se pudo actualizar la salida');
+      resetScanner();
+    }
   };
 
-  const checkIngresoAbierto = async (invitacion_id: string | null, personal_id: string | null): Promise<string | null> => {
-    if (!profile?.barrio_id) return null;
-    const inicioDia = new Date();
-    inicioDia.setHours(0, 0, 0, 0);
-    let query = supabase
-      .from('ingresos')
-      .select('id')
-      .eq('barrio_id', profile.barrio_id)
-      .eq('estado', 'autorizado')
-      .is('salida_at', null)
-      .gte('created_at', inicioDia.toISOString())
-      .limit(1);
-    if (invitacion_id) query = query.eq('invitacion_id', invitacion_id);
-    else if (personal_id) query = query.eq('personal_id', personal_id);
-    else return null;
-    const { data } = await query;
-    return data?.[0]?.id || null;
+  const checkIngresoAbierto = async (_invitacion_id: string | null, _personal_id: string | null): Promise<string | null> => {
+    return null;
   };
 
-  const checkSalidaHoy = async (invitacion_id: string | null, personal_id: string | null): Promise<{ id: string; salida_at: string } | null> => {
-    if (!profile?.barrio_id) return null;
-    const inicioDia = new Date();
-    inicioDia.setHours(0, 0, 0, 0);
-    let query = supabase
-      .from('ingresos')
-      .select('id, salida_at')
-      .eq('barrio_id', profile.barrio_id)
-      .eq('estado', 'autorizado')
-      .not('salida_at', 'is', null)
-      .gte('created_at', inicioDia.toISOString())
-      .limit(1);
-    if (invitacion_id) query = query.eq('invitacion_id', invitacion_id);
-    else if (personal_id) query = query.eq('personal_id', personal_id);
-    else return null;
-    const { data } = await query;
-    const row = data?.[0];
-    return row ? { id: row.id, salida_at: row.salida_at } : null;
+  const checkSalidaHoy = async (_invitacion_id: string | null, _personal_id: string | null): Promise<{ id: string; salida_at: string } | null> => {
+    return null;
   };
 
   const processFaceWithImage = async (imagePath: string) => {
@@ -232,239 +196,39 @@ export function ScannerScreen() {
     }
   };
 
-  const processFaceValidation = async (imageBase64: string) => {
+  const processFaceValidation = async (_imageBase64: string) => {
     Vibration.vibrate(100);
-    try {
-      const { data, error } = await supabase.functions.invoke('verificar-rostro', {
-        body: {
-          image_base64: imageBase64,
-          barrio_id: profile?.barrio_id,
-          umbral: 0.6,
-        },
-      });
-
-      if (error) throw error;
-
-      if (data?.encontrado) {
-        const resultadoFace: ValidacionQR = {
-          tipo: 'reconocimiento_facial',
-          estado: 'autorizado',
-          nombre: data.vecino?.nombre || 'Vecino reconocido',
-          dni: null,
-          vecino_nombre: data.vecino?.nombre,
-          numero_casa: data.vecino?.numero_casa,
-          invitacion_id: null,
-          personal_id: null,
-          mensaje: data.mensaje || `Reconocido con ${(data.vecino?.similitud * 100).toFixed(1)}% de similitud`,
-        };
-
-        setResultado(resultadoFace);
-        setEstado('autorizado');
-
-        if (habilitarReconocimientoFacial) {
-          abrirBarrera(barrierConfig).catch(() => {});
-        }
-
-        if (profile?.barrio_id) {
-          await supabase.from('ingresos').insert({
-            barrio_id: profile.barrio_id,
-            guardia_id: profile.id,
-            invitacion_id: null,
-            personal_id: null,
-            nombre_visitante: data.vecino?.nombre,
-            dni_visitante: null,
-            casa_destino: data.vecino?.numero_casa,
-            tipo: 'reconocimiento_facial',
-            estado: 'autorizado',
-          });
-        }
-
-        timeoutRef.current = setTimeout(resetScanner, 5000);
-
-      } else {
-        const resultadoFace: ValidacionQR = {
-          tipo: 'reconocimiento_facial',
-          estado: 'rechazado',
-          nombre: null,
-          dni: null,
-          vecino_nombre: null,
-          numero_casa: null,
-          invitacion_id: null,
-          personal_id: null,
-          mensaje: data?.mensaje || 'Rostro no reconocido',
-        };
-
-        setResultado(resultadoFace);
-        setEstado('rechazado');
-        timeoutRef.current = setTimeout(resetScanner, 4000);
-      }
-
-    } catch (error) {
-      console.error('Error procesando rostro:', error);
-      setEstado('rechazado');
-      setResultado({
-        tipo: 'reconocimiento_facial',
-        estado: 'rechazado',
-        nombre: null,
-        dni: null,
-        vecino_nombre: null,
-        numero_casa: null,
-        invitacion_id: null,
-        personal_id: null,
-        mensaje: 'Error procesando imagen',
-      });
-      timeoutRef.current = setTimeout(resetScanner, 4000);
-    } finally {
-      setFaceDetectionActive(false);
-      processingFace.current = false;
-    }
+    Alert.alert('Próximamente', 'El reconocimiento facial estará disponible pronto.');
+    setEstado('rechazado');
+    setResultado({
+      tipo: 'reconocimiento_facial',
+      estado: 'rechazado',
+      nombre: null,
+      dni: null,
+      vecino_nombre: null,
+      numeroCasa: null,
+      invitacion_id: null,
+      personal_id: null,
+      mensaje: 'No disponible',
+    });
+    timeoutRef.current = setTimeout(resetScanner, 4000);
+    setFaceDetectionActive(false);
+    processingFace.current = false;
   };
 
-  const notificarVecino = async (validacion: ValidacionQR | null) => {
-    if (!validacion) return;
 
-    try {
-      // Si es personal, notificar a todos los vecinos vinculados
-      if (validacion.tipo === 'personal' && validacion.personal_id) {
-        await notificarVecinosPersonal(validacion);
-        return;
-      }
-
-      if (!validacion.invitacion_id) return;
-
-      const { data: invitacion } = await supabase
-        .from('invitaciones')
-        .select('vecino_id, nombre_invitado')
-        .eq('id', validacion.invitacion_id)
-        .maybeSingle();
-
-      if (!invitacion?.vecino_id) return;
-
-      const { data: perfil } = await supabase
-        .from('profiles')
-        .select('expo_push_token, nombre')
-        .eq('id', invitacion.vecino_id)
-        .maybeSingle();
-
-      if (!perfil?.expo_push_token) return;
-
-      const nombreInvitado = validacion.nombre || invitacion.nombre_invitado || 'Alguien';
-
-      if (validacion.estado === 'autorizado') {
-        await sendPushNotification(
-          perfil.expo_push_token,
-          '✅ Ingreso autorizado',
-          `${nombreInvitado} ingresó al barrio`,
-          {
-            invitacion_id: validacion.invitacion_id,
-            nombre_invitado: nombreInvitado,
-            numero_casa: validacion.numero_casa,
-          }
-        );
-      } else if (validacion.estado === 'rechazado') {
-        await sendPushNotification(
-          perfil.expo_push_token,
-          '⚠️ Ingreso rechazado',
-          `Se rechazó el ingreso de ${nombreInvitado}. ${validacion.mensaje || 'Invitación inválida o expirada.'}`,
-          {
-            invitacion_id: validacion.invitacion_id,
-            nombre_invitado: nombreInvitado,
-            numero_casa: validacion.numero_casa,
-            estado: 'rechazado',
-          }
-        );
-      }
-    } catch (error) {
-      console.error('Error enviando notificación al vecino:', error);
-    }
-  };
-
-  const notificarVecinosPersonal = async (validacion: ValidacionQR) => {
-    if (!validacion.personal_id) return;
-
-    try {
-      // Buscar todos los vecinos que tienen permisos activos para esta persona
-      const { data: permisos } = await supabase
-        .from('permisos_horarios')
-        .select('vecino_id')
-        .eq('personal_id', validacion.personal_id)
-        .eq('activo', true);
-
-      if (!permisos || permisos.length === 0) return;
-
-      // Obtener vecinos únicos
-      const vecinoIds = [...new Set(permisos.map((p) => p.vecino_id))];
-
-      const { data: vecinos } = await supabase
-        .from('profiles')
-        .select('expo_push_token, nombre')
-        .in('id', vecinoIds);
-
-      if (!vecinos) return;
-
-      const nombrePersonal = validacion.nombre || 'Personal de servicio';
-
-      const promesas = vecinos
-        .filter((v) => v.expo_push_token)
-        .map((v) => {
-          if (validacion.estado === 'autorizado') {
-            return sendPushNotification(
-              v.expo_push_token!,
-              '🏠 Personal ingresó',
-              `${nombrePersonal} ingresó al barrio`,
-              { personal_id: validacion.personal_id, tipo: 'personal' }
-            );
-          } else if (validacion.estado === 'rechazado') {
-            return sendPushNotification(
-              v.expo_push_token!,
-              '⚠️ Personal rechazado',
-              `Se rechazó el ingreso de ${nombrePersonal}. ${validacion.mensaje || 'Fuera de horario.'}`,
-              { personal_id: validacion.personal_id, tipo: 'personal', estado: 'rechazado' }
-            );
-          }
-          return Promise.resolve();
-        });
-
-      await Promise.all(promesas);
-    } catch (error) {
-      console.error('Error notificando vecinos de personal:', error);
-    }
-  };
-
-  const resolverPendiente = async (nuevoEstado: 'autorizado' | 'rechazado') => {
-    if (!resultado || !profile?.barrio_id) return;
-
-    try {
-      // Actualizar el ingreso que se registró como pendiente
-      if (resultado.personal_id) {
-        await supabase
-          .from('ingresos')
-          .update({ estado: nuevoEstado })
-          .eq('barrio_id', profile.barrio_id)
-          .eq('personal_id', resultado.personal_id)
-          .eq('estado', 'pendiente')
-          .order('created_at', { ascending: false })
-          .limit(1);
-      }
-
-      // Notificar a los vecinos vinculados con el estado final
-      const resultadoFinal: ValidacionQR = {
-        ...resultado,
-        estado: nuevoEstado,
-        mensaje: nuevoEstado === 'autorizado'
-          ? 'Autorizado por guardia (fuera de horario)'
-          : 'Rechazado por guardia',
-      };
-
-      await notificarVecinosPersonal(resultadoFinal);
-
-      setEstado(nuevoEstado);
-      setResultado(resultadoFinal);
-
-      timeoutRef.current = setTimeout(resetScanner, 4000);
-    } catch (error) {
-      console.error('Error resolviendo pendiente:', error);
-    }
+  const resolverPendiente = (nuevoEstado: 'autorizado' | 'rechazado') => {
+    if (!resultado) return;
+    const resultadoFinal: ValidacionQR = {
+      ...resultado,
+      estado: nuevoEstado,
+      mensaje: nuevoEstado === 'autorizado'
+        ? 'Autorizado por guardia (fuera de horario)'
+        : 'Rechazado por guardia',
+    };
+    setEstado(nuevoEstado);
+    setResultado(resultadoFinal);
+    timeoutRef.current = setTimeout(resetScanner, 4000);
   };
 
   const currentGate = gates.find(g => g.id === selectedGateId) ?? null;
@@ -472,85 +236,28 @@ export function ScannerScreen() {
 
   const handleBarCodeScanned = async (codes: any[]) => {
     const data = codes[0]?.value;
-    console.log('[SCAN] código detectado:', data?.slice(0, 30), '| scanned:', scanned, '| barrio_id:', profile?.barrio_id);
+    console.log('[SCAN] código detectado:', data?.slice(0, 30), '| scanned:', scanned, '| spaceId:', space?.id);
     if (!data || scanned) return;
     setScanned(true);
     Vibration.vibrate(100);
 
     try {
-      // Puerta tipo OUT: solo registrar salida, sin validar QR de entrada
-      if (currentGateTipo === 'OUT' && profile?.barrio_id) {
-        const { data: invData } = await supabase
-          .from('invitaciones')
-          .select('id, nombre_invitado, numero_casa')
-          .eq('qr_code', data)
-          .maybeSingle();
-        if (invData?.id) {
-          const idAbierto = await checkIngresoAbierto(invData.id, null);
-          if (idAbierto) {
-            setResultado({ tipo: 'invitado', estado: 'autorizado', nombre: invData.nombre_invitado, dni: null, vecino_nombre: null, numero_casa: invData.numero_casa, invitacion_id: invData.id, personal_id: null, mensaje: '' });
-            setEstado('autorizado');
-            setIngresoAbierto(idAbierto);
-            ingresoAbiertoRef.current = idAbierto;
-            setShowSalidaModal(true);
-            startSalidaTimer();
-            return;
-          }
-        }
-        setResultado({ tipo: 'invitado', estado: 'rechazado', nombre: null, dni: null, vecino_nombre: null, numero_casa: null, invitacion_id: null, personal_id: null, mensaje: 'Sin ingreso registrado hoy' });
-        setEstado('rechazado');
-        timeoutRef.current = setTimeout(resetScanner, 4000);
-        return;
+      if (!space?.id) {
+        throw new Error('No hay space seleccionado');
       }
 
-      // Pre-check salida ANTES de llamar validar_qr para no marcar QR como "utilizado"
-      // Solo aplica cuando tipo es BOTH (no para IN)
-      if (currentGateTipo !== 'IN' && registrarSalidas && profile?.barrio_id) {
-        const { data: invData } = await supabase
-          .from('invitaciones')
-          .select('id, nombre_invitado, numero_casa')
-          .eq('qr_code', data)
-          .maybeSingle();
+      const result = await accesosApi.verificar({
+        qrCode: data,
+        spaceId: space.id,
+        tipo: currentGateTipo === 'OUT' ? 'salida' : 'entrada',
+      });
 
-        if (invData?.id) {
-          const idAbierto = await checkIngresoAbierto(invData.id, null);
-          if (idAbierto) {
-            setResultado({ tipo: 'invitado', estado: 'autorizado', nombre: invData.nombre_invitado, dni: null, vecino_nombre: null, numero_casa: invData.numero_casa, invitacion_id: invData.id, personal_id: null, mensaje: '' });
-            setEstado('autorizado');
-            setIngresoAbierto(idAbierto);
-            ingresoAbiertoRef.current = idAbierto;
-            setShowSalidaModal(true);
-            startSalidaTimer();
-            return;
-          }
-          const salidaHoy = await checkSalidaHoy(invData.id, null);
-          if (salidaHoy) {
-            setResultado({ tipo: 'invitado', estado: 'autorizado', nombre: invData.nombre_invitado, dni: null, vecino_nombre: null, numero_casa: invData.numero_casa, invitacion_id: invData.id, personal_id: null, mensaje: '' });
-            setEstado('autorizado');
-            setSalidaPrevio(salidaHoy.salida_at);
-            setIngresoIdCorregir(salidaHoy.id);
-            setShowCorregirSalidaModal(true);
-            return;
-          }
-        }
-      }
-
-      const { data: validacion, error } = await supabase
-        .rpc('validar_qr', {
-          p_qr_code: data,
-          p_barrio_id: profile?.barrio_id,
-        });
-
-      console.log('[SCAN] RPC result:', JSON.stringify(validacion), '| error:', error?.message);
-      if (error) throw error;
-
-      const result = validacion?.[0] as ValidacionQR;
-      console.log('Resultado validación QR:', result);
+      console.log('[SCAN] API result:', result);
       setResultado(result);
-      setEstado(result?.estado || 'rechazado');
+      setEstado(result.autorizado ? 'autorizado' : 'rechazado');
 
       // Abrir barrera si está autorizado y configurada
-      if (result?.estado === 'autorizado' && barrierConfig?.habilitado) {
+      if (result.autorizado && barrierConfig?.habilitado) {
         abrirBarrera(barrierConfig).then((barrierResult) => {
           if (!barrierResult.success) {
             console.warn('Barrera:', barrierResult.message);
@@ -558,30 +265,8 @@ export function ScannerScreen() {
         });
       }
 
-      if (result && profile?.barrio_id) {
-        const { error: ingresoError } = await supabase.from('ingresos').insert({
-          barrio_id: profile.barrio_id,
-          guardia_id: profile.id,
-          invitacion_id: result.invitacion_id,
-          personal_id: result.personal_id,
-          nombre_visitante: result.nombre || 'Desconocido',
-          dni_visitante: result.dni,
-          casa_destino: result.numero_casa,
-          tipo: result.tipo === 'invitado' ? 'invitado' : result.tipo === 'personal' ? 'personal' : 'manual',
-          estado: result.estado,
-        });
-
-        if (ingresoError) {
-          console.error('Error registrando ingreso:', ingresoError);
-        }
-
-        await notificarVecino(result);
-      }
-
-      // Auto-reset después de 5 segundos (no para pendientes, el guardia debe decidir)
-      if (result?.estado !== 'pendiente') {
-        timeoutRef.current = setTimeout(resetScanner, 5000);
-      }
+      // Auto-reset después de 5 segundos
+      timeoutRef.current = setTimeout(resetScanner, 5000);
     } catch (error) {
       console.error('Error validando QR:', error);
       setEstado('rechazado');
@@ -591,7 +276,7 @@ export function ScannerScreen() {
         nombre: null,
         dni: null,
         vecino_nombre: null,
-        numero_casa: null,
+        numeroCasa: null,
         invitacion_id: null,
         personal_id: null,
         mensaje: 'Error de conexión',
@@ -601,20 +286,17 @@ export function ScannerScreen() {
   };
 
   const buscarManual = async () => {
-    if (!busqueda.trim() || !profile?.barrio_id) return;
-
+    if (!space?.id || !busqueda.trim()) {
+      setResultadosBusqueda([]);
+      return;
+    }
     try {
-      const { data, error } = await supabase
-        .rpc('buscar_invitacion', {
-          p_termino: busqueda,
-          p_barrio_id: profile.barrio_id,
-        });
-
-      if (!error && data) {
-        setResultadosBusqueda(data);
-      }
+      const { resultados } = await invitacionesApi.buscar(space.id, busqueda.trim());
+      setResultadosBusqueda(resultados);
     } catch (error) {
-      console.error('Error en búsqueda manual:', error);
+      console.error('Error buscando:', error);
+      Alert.alert('Error', 'No se pudo realizar la búsqueda');
+      setResultadosBusqueda([]);
     }
   };
 
@@ -622,19 +304,8 @@ export function ScannerScreen() {
     setShowManual(false);
     setBusqueda('');
     setResultadosBusqueda([]);
-    
-    try {
-      const { data: invitacion } = await supabase
-        .from('invitaciones')
-        .select('qr_code')
-        .eq('id', inv.invitacion_id)
-        .single();
-
-      if (invitacion?.qr_code) {
-        handleBarCodeScanned([{ value: invitacion.qr_code }]);
-      }
-    } catch (error) {
-      console.error('Error seleccionando invitación:', error);
+    if (inv.qrCode) {
+      await handleBarCodeScanned({ data: inv.qrCode } as any);
     }
   };
 
@@ -747,8 +418,8 @@ export function ScannerScreen() {
             {estado === 'pendiente' && 'FUERA DE HORARIO'}
           </Text>
 
-          {resultado?.numero_casa && (
-            <Text style={styles.casaText}>Casa {resultado.numero_casa}</Text>
+          {resultado?.numeroCasa && (
+            <Text style={styles.casaText}>Casa {resultado.numeroCasa}</Text>
           )}
           
           {resultado?.nombre && (
@@ -901,7 +572,7 @@ export function ScannerScreen() {
               >
                 <Text style={styles.resultNombre}>{item.nombre_invitado}</Text>
                 <Text style={styles.resultDetalle}>
-                  Casa {item.numero_casa} • {item.vecino_nombre}
+                  Casa {item.numeroCasa} • {item.vecinoNombre}
                 </Text>
                 {item.dni_invitado && (
                   <Text style={styles.resultDni}>DNI: {item.dni_invitado}</Text>

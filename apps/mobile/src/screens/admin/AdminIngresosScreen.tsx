@@ -11,57 +11,42 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { accesosApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { AppHeader } from '../../components/AppHeader';
 
 type Ingreso = {
   id: string;
-  created_at: string;
-  salida_at: string | null;
-  nombre_visitante: string | null;
-  dni_visitante: string | null;
-  casa_destino: string | null;
+  createdAt: string;
+  salidaAt: string | null;
+  nombreVisitante: string | null;
+  dniVisitante: string | null;
+  casaDestino: string | null;
   tipo: string | null;
   estado: string | null;
 };
 
 export function AdminIngresosScreen() {
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const [ingresos, setIngresos] = useState<Ingreso[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filtroCasa, setFiltroCasa] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'invitacion' | 'evento' | 'delivery' | 'presentes'>('todos');
-  const [registrarSalidas, setRegistrarSalidas] = useState(false);
+  const [registrarSalidas] = useState(false);
 
   const cargarIngresos = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
     try {
-      const inicioDia = new Date();
-      inicioDia.setDate(inicioDia.getDate() - 7);
-      inicioDia.setHours(0, 0, 0, 0);
-
-      const { data: barrioData } = await supabase
-        .from('barrios').select('registrar_salidas').eq('id', profile.barrio_id).single();
-      if (barrioData) setRegistrarSalidas(barrioData.registrar_salidas || false);
-
-      const { data, error } = await supabase
-        .from('ingresos')
-        .select('id, created_at, salida_at, nombre_visitante, dni_visitante, casa_destino, tipo, estado')
-        .eq('barrio_id', profile.barrio_id)
-        .gte('created_at', inicioDia.toISOString())
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setIngresos((data as Ingreso[]) || []);
+      const data = await accesosApi.historial(space.id);
+      setIngresos((data as any)?.accesos || data || []);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargarIngresos(); }, [cargarIngresos]);
 
@@ -69,26 +54,21 @@ export function AdminIngresosScreen() {
 
   const ingresosFiltrados = ingresos.filter((ing) => {
     const casa = filtroCasa.trim().toLowerCase();
-    const coincideCasa = !casa || (ing.casa_destino || '').toLowerCase().includes(casa);
-    if (filtroTipo === 'presentes') return coincideCasa && ing.estado === 'autorizado' && !ing.salida_at;
+    const coincideCasa = !casa || (ing.casaDestino || '').toLowerCase().includes(casa);
+    if (filtroTipo === 'presentes') return coincideCasa && ing.estado === 'autorizado' && !ing.salidaAt;
     const coincideTipo = filtroTipo === 'todos' || ing.tipo === filtroTipo;
     return coincideCasa && coincideTipo;
   });
 
-  const marcarSalida = (ing: Ingreso) => {
-    Alert.alert(
-      'Registrar salida',
-      `¿Confirmás la salida de ${ing.nombre_visitante || 'esta persona'}?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Confirmar', onPress: async () => {
-            await supabase.from('ingresos').update({ salida_at: new Date().toISOString() }).eq('id', ing.id);
-            setIngresos(prev => prev.map(i => i.id === ing.id ? { ...i, salida_at: new Date().toISOString() } : i));
-          }
-        },
-      ]
-    );
+  const marcarSalida = async (ing: Ingreso) => {
+    try {
+      await accesosApi.registrarSalida(ing.id);
+      Alert.alert('Éxito', 'Salida registrada correctamente');
+      cargarIngresos();
+    } catch (error) {
+      console.error('Error registrando salida:', error);
+      Alert.alert('Error', 'No se pudo registrar la salida');
+    }
   };
 
   const estadoColor = (estado: string | null) => {
@@ -175,7 +155,7 @@ export function AdminIngresosScreen() {
           </View>
         ) : (
           ingresosFiltrados.map((ing) => {
-            const estaAdentro = registrarSalidas && ing.estado === 'autorizado' && !ing.salida_at;
+            const estaAdentro = registrarSalidas && ing.estado === 'autorizado' && !ing.salidaAt;
             return (
               <View key={ing.id} style={[styles.ingresoCard, estaAdentro && styles.ingresoCardAdentro]}>
                 <View style={[styles.iconCircle, { backgroundColor: `${estadoColor(ing.estado)}20` }]}>
@@ -183,15 +163,15 @@ export function AdminIngresosScreen() {
                 </View>
                 <View style={styles.ingresoInfo}>
                   <Text style={styles.ingresoNombre} numberOfLines={1}>
-                    {ing.nombre_visitante || 'Sin nombre'}
+                    {ing.nombreVisitante || 'Sin nombre'}
                   </Text>
                   <Text style={styles.ingresoMeta} numberOfLines={1}>
-                    {ing.dni_visitante ? `DNI: ${ing.dni_visitante} • ` : ''}Casa {ing.casa_destino || 'N/A'}
+                    {ing.dniVisitante ? `DNI: ${ing.dniVisitante} • ` : ''}Casa {ing.casaDestino || 'N/A'}
                   </Text>
                   <View style={styles.ingresoFooter}>
-                    <Text style={styles.ingresoFecha}>{formatFecha(ing.created_at)} {formatHora(ing.created_at)}</Text>
-                    {ing.salida_at
-                      ? <Text style={styles.salidaText}>Salida {formatHora(ing.salida_at)}</Text>
+                    <Text style={styles.ingresoFecha}>{formatFecha(ing.createdAt)} {formatHora(ing.createdAt)}</Text>
+                    {ing.salidaAt
+                      ? <Text style={styles.salidaText}>Salida {formatHora(ing.salidaAt)}</Text>
                       : <View style={[styles.estadoPill, { backgroundColor: `${estadoColor(ing.estado)}20` }]}>
                           <Text style={[styles.estadoText, { color: estadoColor(ing.estado) }]}>
                             {(ing.estado || 'N/A').toUpperCase()}

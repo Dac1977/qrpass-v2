@@ -16,8 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
-import { supabase } from '../../lib/supabase';
-import { sendPushNotification } from '../../lib/notifications';
+import { alertasApi, spacesApi, accesosApi, authApi, Membership } from '../../lib/api';
 import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -25,25 +24,19 @@ import { getSpaceLabels } from '../../utils/spaceLabels';
 
 type TipoEmergencia = 'emergencia' | 'incendio' | 'robo' | 'medica' | 'otro';
 
-type BarrioInfo = {
-  nombre: string;
-  direccion: string | null;
-};
-
 export function PerfilScreen({ navigation }: any) {
-  const { profile, space, signOut, switchSpace: storeSwitchSpace, fetchProfile } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
+  const { profile, space, signOut, switchSpace: storeSwitchSpace } = useAuthStore();
+  const labels = getSpaceLabels(space?.spaceType);
   const [showEmergencia, setShowEmergencia] = useState(false);
   const [compartirUbicacion, setCompartirUbicacion] = useState(false);
   const [showBarrio, setShowBarrio] = useState(false);
   const [showAyuda, setShowAyuda] = useState(false);
   const [showNotificaciones, setShowNotificaciones] = useState(false);
   const [enviandoAlerta, setEnviandoAlerta] = useState(false);
-  const [barrioInfo, setBarrioInfo] = useState<BarrioInfo | null>(null);
   const [notificaciones, setNotificaciones] = useState<any[]>([]);
   const [loadingNotif, setLoadingNotif] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [misEspacios, setMisEspacios] = useState<{ space_id: string; space_nombre: string; space_type: string; codigo: string }[]>([]);
+  const [misEspacios, setMisEspacios] = useState<Membership[]>([]);
   const [showEspacios, setShowEspacios] = useState(false);
   const [showNuevoEspacio, setShowNuevoEspacio] = useState(false);
   const [nuevoNombre, setNuevoNombre] = useState('');
@@ -53,13 +46,10 @@ export function PerfilScreen({ navigation }: any) {
   const [switchError, setSwitchError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (profile?.barrio_id) {
-      fetchBarrioInfo();
-    }
-    if (profile?.id && profile?.rol === 'admin') {
+    if (profile?.rol === 'admin' || profile?.rol === 'super_admin') {
       cargarMisEspacios();
     }
-  }, [profile?.barrio_id, profile?.rol]);
+  }, [space?.id, profile?.rol]);
 
   useEffect(() => {
     AsyncStorage.getItem('compartirUbicacionEmergencia').then(val => {
@@ -68,9 +58,12 @@ export function PerfilScreen({ navigation }: any) {
   }, []);
 
   const cargarMisEspacios = async () => {
-    if (!profile?.id) return;
-    const { data } = await supabase.rpc('get_mis_espacios', { p_user_id: profile.id });
-    if (data) setMisEspacios(data);
+    try {
+      const { memberships } = await spacesApi.getMemberships();
+      setMisEspacios(memberships.filter(m => m.activo && (m.rol === 'admin' || m.rol === 'super_admin')));
+    } catch {
+      // silently ignore
+    }
   };
 
   const switchSpace = async (spaceId: string) => {
@@ -88,24 +81,19 @@ export function PerfilScreen({ navigation }: any) {
   };
 
   const crearEspacio = async () => {
-    if (!profile?.id || !nuevoNombre.trim()) return;
+    if (!nuevoNombre.trim()) return;
     setCreandoEspacio(true);
     try {
-      const { data, error } = await supabase.rpc('crear_espacio_para_usuario', {
-        p_user_id:      profile.id,
-        p_space_nombre: nuevoNombre.trim(),
-        p_space_type:   nuevoTipo,
-        p_space_dir:    null,
-        p_precio:       0,
+      const { space: newSpace } = await spacesApi.crearParaUsuario({
+        nombre: nuevoNombre.trim(),
+        spaceType: nuevoTipo,
       });
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error);
-      await storeSwitchSpace(data.space_id);
+      await storeSwitchSpace(newSpace.id);
       await cargarMisEspacios();
       setShowNuevoEspacio(false);
       setNuevoNombre('');
       setNuevoTipo('residential');
-      Alert.alert('¡Espacio creado!', `"${nuevoNombre.trim()}" fue creado.\nCódigo de acceso: ${data.codigo}\n\nYa estás administrando el nuevo espacio.`, [{ text: 'OK' }]);
+      Alert.alert('¡Espacio creado!', `"${nuevoNombre.trim()}" fue creado.\nCódigo de acceso: ${newSpace.codigoInvitacion}\n\nYa estás administrando el nuevo espacio.`, [{ text: 'OK' }]);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'No se pudo crear el espacio');
     } finally {
@@ -113,27 +101,16 @@ export function PerfilScreen({ navigation }: any) {
     }
   };
 
-  const fetchBarrioInfo = async () => {
-    if (!profile?.barrio_id) return;
-    const { data } = await supabase
-      .from('barrios')
-      .select('nombre, direccion')
-      .eq('id', profile.barrio_id)
-      .maybeSingle();
-    if (data) setBarrioInfo(data);
-  };
-
   const fetchNotificaciones = async () => {
-    if (!profile?.id) return;
     setLoadingNotif(true);
-    const { data } = await supabase
-      .from('ingresos')
-      .select('id, nombre_visitante, casa_destino, estado, created_at')
-      .eq('casa_destino', profile.numero_casa)
-      .order('created_at', { ascending: false })
-      .limit(20);
-    setNotificaciones(data || []);
-    setLoadingNotif(false);
+    try {
+      const res = await accesosApi.misIngresos() as { ingresos: any[] };
+      setNotificaciones(res.ingresos ?? []);
+    } catch {
+      setNotificaciones([]);
+    } finally {
+      setLoadingNotif(false);
+    }
   };
 
   const handleSignOut = async () => {
@@ -158,42 +135,16 @@ export function PerfilScreen({ navigation }: any) {
   };
 
   const deleteAccount = async () => {
-    if (!profile?.id) return;
-
     try {
-      // Marcar el perfil como inactivo en lugar de eliminarlo completamente
-      const { error } = await supabase
-        .from('profiles')
-        .update({ 
-          activo: false,
-          email: `deleted_${Date.now()}@deleted.com`,
-          nombre: 'Usuario Eliminado',
-          numero_casa: null,
-          telefono: null
-        })
-        .eq('id', profile.id);
-
-      if (error) throw error;
-
-      if (Platform.OS === 'web') {
-        window.alert('Tu cuenta ha sido dada de baja correctamente. Serás desconectado automáticamente.');
-      } else {
-        Alert.alert(
-          'Cuenta dada de baja',
-          'Tu cuenta ha sido dada de baja correctamente. Serás desconectado automáticamente.',
-          [{ text: 'OK', onPress: () => signOut() }]
-        );
-      }
-
-      // Cerrar sesión
+      await authApi.deleteAccount();
+      Alert.alert(
+        'Cuenta dada de baja',
+        'Tu cuenta ha sido dada de baja correctamente. Serás desconectado automáticamente.',
+        [{ text: 'OK', onPress: () => signOut() }]
+      );
       setTimeout(() => signOut(), 1000);
     } catch (error) {
-      console.error('Error al dar de baja la cuenta:', error);
-      if (Platform.OS === 'web') {
-        window.alert('Ocurrió un error al dar de baja tu cuenta. Intentá nuevamente.');
-      } else {
-        Alert.alert('Error', 'Ocurrió un error al dar de baja tu cuenta. Intentá nuevamente.');
-      }
+      Alert.alert('Error', 'Ocurrió un error al dar de baja tu cuenta. Intentá nuevamente.');
     }
   };
 
@@ -258,7 +209,7 @@ export function PerfilScreen({ navigation }: any) {
   };
 
   const enviarAlertaEmergencia = async (tipo: TipoEmergencia) => {
-    if (!profile?.barrio_id || !profile?.id) return;
+    if (!space?.id) return;
     setEnviandoAlerta(true);
 
     let latitud: number | undefined;
@@ -274,10 +225,6 @@ export function PerfilScreen({ navigation }: any) {
       }
     }
 
-    const mapsUrl = latitud != null && longitud != null
-      ? `\n📍 https://maps.google.com/?q=${latitud},${longitud}`
-      : '';
-
     try {
       const tipoLabels: Record<TipoEmergencia, string> = {
         emergencia: '🚨 Emergencia General',
@@ -287,55 +234,19 @@ export function PerfilScreen({ navigation }: any) {
         otro: '⚠️ Otro',
       };
 
-      const { error } = await supabase.from('alertas_emergencia').insert({
-        barrio_id: profile.barrio_id,
-        vecino_id: profile.id,
+      await alertasApi.enviar({
+        spaceId: space.id,
         tipo,
-        numero_casa: profile.numero_casa,
-        mensaje: `${tipoLabels[tipo]} - ${labels.unit} ${profile.numero_casa || 'S/N'} (${profile.nombre})`,
-        latitud: latitud ?? null,
-        longitud: longitud ?? null,
+        mensaje: `${tipoLabels[tipo]} - ${labels.unit} ${profile?.numeroCasa || 'S/N'} (${profile?.nombre})`,
+        latitud,
+        longitud,
       });
-
-      if (error) throw error;
-
-      const { data: guardias } = await supabase
-        .from('profiles')
-        .select('expo_push_token, nombre')
-        .eq('barrio_id', profile.barrio_id)
-        .eq('rol', 'guardia')
-        .eq('activo', true);
-
-      if (guardias && guardias.length > 0) {
-        const promesas = guardias
-          .filter((g) => g.expo_push_token)
-          .map((g) =>
-            sendPushNotification(
-              g.expo_push_token!,
-              `${tipoLabels[tipo]}`,
-              `${labels.unit} ${profile.numero_casa || 'S/N'} - ${profile.nombre} solicita ayuda urgente${mapsUrl}`,
-              { tipo: 'emergencia', numero_casa: profile.numero_casa, latitud, longitud }
-            )
-          );
-        await Promise.all(promesas);
-      }
 
       Vibration.vibrate([0, 200, 100, 200]);
       setShowEmergencia(false);
-
-      const staffLabel = labels.staff.toLowerCase();
-      if (Platform.OS === 'web') {
-        window.alert(`Alerta enviada al ${staffLabel}`);
-      } else {
-        Alert.alert('Alerta enviada', `El ${staffLabel} fue notificado.`);
-      }
+      Alert.alert('Alerta enviada', `El ${labels.staff.toLowerCase()} fue notificado.`);
     } catch (error) {
-      console.error('Error enviando alerta:', error);
-      if (Platform.OS === 'web') {
-        window.alert('Error al enviar la alerta. Intentá de nuevo.');
-      } else {
-        Alert.alert('Error', 'No se pudo enviar la alerta. Intentá de nuevo.');
-      }
+      Alert.alert('Error', 'No se pudo enviar la alerta. Intentá de nuevo.');
     } finally {
       setEnviandoAlerta(false);
     }
@@ -390,10 +301,10 @@ export function PerfilScreen({ navigation }: any) {
       </View>
 
       <View style={styles.infoCard}>
-        {profile?.numero_casa && (
+        {profile?.numeroCasa && (
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Casa</Text>
-            <Text style={styles.infoValue}>{profile.numero_casa}</Text>
+            <Text style={styles.infoValue}>{profile.numeroCasa}</Text>
           </View>
         )}
         {profile?.telefono && (
@@ -402,10 +313,10 @@ export function PerfilScreen({ navigation }: any) {
             <Text style={styles.infoValue}>{profile.telefono}</Text>
           </View>
         )}
-        {barrioInfo?.nombre && (
+        {space?.nombre && (
           <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
             <Text style={styles.infoLabel}>Barrio</Text>
-            <Text style={styles.infoValue}>{barrioInfo.nombre}</Text>
+            <Text style={styles.infoValue}>{space.nombre}</Text>
           </View>
         )}
       </View>
@@ -539,17 +450,17 @@ export function PerfilScreen({ navigation }: any) {
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {misEspacios.map(sp => (
               <TouchableOpacity
-                key={sp.space_id}
-                style={[styles.menuItem, sp.space_id === profile?.barrio_id && { backgroundColor: '#1e3a5f', borderRadius: 10 }]}
-                onPress={() => switchSpace(sp.space_id)}
-                disabled={switchingSpace || sp.space_id === profile?.barrio_id}
+                key={sp.spaceId}
+                style={[styles.menuItem, sp.spaceId === space?.id && { backgroundColor: '#1e3a5f', borderRadius: 10 }]}
+                onPress={() => switchSpace(sp.spaceId)}
+                disabled={switchingSpace || sp.spaceId === space?.id}
               >
                 <Ionicons name="business-outline" size={20} color="#3b82f6" style={{ marginRight: 12 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.menuText}>{sp.space_nombre}</Text>
-                  <Text style={{ color: '#64748b', fontSize: 12 }}>{sp.space_type}</Text>
+                  <Text style={styles.menuText}>{sp.spaceName}</Text>
+                  <Text style={{ color: '#64748b', fontSize: 12 }}>{sp.spaceType}</Text>
                 </View>
-                {sp.space_id === profile?.barrio_id && (
+                {sp.spaceId === space?.id && (
                   <Ionicons name="checkmark-circle" size={20} color="#3b82f6" />
                 )}
               </TouchableOpacity>
@@ -682,13 +593,13 @@ export function PerfilScreen({ navigation }: any) {
                 {notificaciones.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
                     <Ionicons
-                      name={n.estado === 'autorizado' ? 'checkmark-circle' : n.estado === 'rechazado' ? 'close-circle' : 'time'}
+                      name={n.autorizado ? 'checkmark-circle' : 'close-circle'}
                       size={22}
-                      color={n.estado === 'autorizado' ? '#22c55e' : n.estado === 'rechazado' ? '#ef4444' : '#eab308'}
+                      color={n.autorizado ? '#22c55e' : '#ef4444'}
                     />
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.notifText}>{n.nombre_visitante}</Text>
-                      <Text style={styles.notifDate}>{formatDate(n.created_at)}</Text>
+                      <Text style={styles.notifText}>{n.tipo} • {n.metodo}</Text>
+                      <Text style={styles.notifDate}>{formatDate(n.createdAt)}</Text>
                     </View>
                   </View>
                 ))}
@@ -709,15 +620,15 @@ export function PerfilScreen({ navigation }: any) {
             <View style={styles.barrioInfoCard}>
               <View style={styles.barrioInfoRow}>
                 <Text style={styles.barrioInfoLabel}>Nombre</Text>
-                <Text style={styles.barrioInfoValue}>{barrioInfo?.nombre || '---'}</Text>
+                <Text style={styles.barrioInfoValue}>{space?.nombre || '---'}</Text>
               </View>
               <View style={styles.barrioInfoRow}>
                 <Text style={styles.barrioInfoLabel}>Dirección</Text>
-                <Text style={styles.barrioInfoValue}>{barrioInfo?.direccion || '---'}</Text>
+                <Text style={styles.barrioInfoValue}>{space?.direccion || '---'}</Text>
               </View>
               <View style={styles.barrioInfoRow}>
                 <Text style={styles.barrioInfoLabel}>Mi Casa</Text>
-                <Text style={styles.barrioInfoValue}>{profile?.numero_casa || '---'}</Text>
+                <Text style={styles.barrioInfoValue}>{profile?.numeroCasa || '---'}</Text>
               </View>
             </View>
             <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowBarrio(false)}>

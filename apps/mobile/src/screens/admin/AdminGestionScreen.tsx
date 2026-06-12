@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { AppHeader } from '../../components/AppHeader';
-import { supabase } from '../../lib/supabase';
+import { spacesApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 
 const menuItems = [
@@ -16,19 +16,30 @@ const menuItems = [
 
 export function AdminGestionScreen() {
   const navigation = useNavigation<any>();
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const [registrarSalidas, setRegistrarSalidas] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!profile?.barrio_id) return;
-    supabase.from('barrios').select('registrar_salidas').eq('id', profile.barrio_id).single()
-      .then(({ data }) => { if (data) setRegistrarSalidas(data.registrar_salidas || false); });
-  }, [profile?.barrio_id]);
+    if (space?.registrarSalidas !== undefined) {
+      setRegistrarSalidas(space.registrarSalidas);
+    }
+  }, [space?.registrarSalidas]);
 
   const toggleSalidas = async (value: boolean) => {
-    if (!profile?.barrio_id) return;
-    setRegistrarSalidas(value);
-    await supabase.from('barrios').update({ registrar_salidas: value }).eq('id', profile.barrio_id);
+    if (!space?.id) return;
+    setLoading(true);
+    try {
+      await spacesApi.actualizar(space.id, { registrarSalidas: value });
+      setRegistrarSalidas(value);
+      Alert.alert('Éxito', 'Configuración actualizada');
+    } catch (error) {
+      console.error('Error actualizando configuración:', error);
+      Alert.alert('Error', 'No se pudo actualizar la configuración');
+      setRegistrarSalidas(!value);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

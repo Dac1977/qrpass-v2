@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,47 +9,29 @@ import {
   RefreshControl,
   Share,
 } from 'react-native';
-import { supabase } from '../../lib/supabase';
+import { invitacionesApi, Invitacion } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { nanoid } from 'nanoid/non-secure';
-
-type AutorizacionDelivery = {
-  id: string;
-  vecino_id: string;
-  nombre_invitado: string;
-  qr_code: string;
-  valido_desde: string;
-  valido_hasta: string;
-  usos_permitidos: number;
-  usos_actuales: number;
-  activo: boolean;
-  created_at: string;
-};
 
 export function DeliveryScreen() {
-  const [autorizaciones, setAutorizaciones] = useState<AutorizacionDelivery[]>([]);
+  const [autorizaciones, setAutorizaciones] = useState<Invitacion[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [creando, setCreando] = useState(false);
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
 
   const fetchAutorizaciones = async () => {
-    if (!profile?.id) return;
-    const { data } = await supabase
-      .from('invitaciones')
-      .select('*')
-      .eq('vecino_id', profile.id)
-      .ilike('nombre_invitado', '%delivery%')
-      .order('created_at', { ascending: false })
-      .limit(20);
-    if (data) setAutorizaciones(data as any);
+    if (!space?.id) return;
+    try {
+      const { invitaciones } = await invitacionesApi.mis(space.id);
+      setAutorizaciones(invitaciones.filter(i => i.tipo === 'delivery'));
+    } catch {
+      // silently ignore
+    }
   };
 
   useFocusEffect(
-    useCallback(() => {
-      fetchAutorizaciones();
-    }, [profile?.id])
+    useCallback(() => { fetchAutorizaciones(); }, [space?.id])
   );
 
   const onRefresh = async () => {
@@ -59,61 +41,52 @@ export function DeliveryScreen() {
   };
 
   const crearAutorizacion = async () => {
-    if (!profile?.id || !profile?.barrio_id) return;
+    if (!space?.id) return;
 
     setCreando(true);
     try {
-      const ahora = new Date();
-      const expira = new Date(ahora.getTime() + 30 * 60 * 1000); // 30 min
-
-      const qrCode = `DLV-${nanoid(16)}`;
-
-      const { error } = await supabase.from('invitaciones').insert({
-        vecino_id: profile.id,
-        nombre_invitado: 'Delivery rápido',
-        qr_code: qrCode,
-        valido_desde: ahora.toISOString(),
-        valido_hasta: expira.toISOString(),
-        usos_permitidos: 1,
+      await invitacionesApi.crear({
+        spaceId: space.id,
+        nombre: 'Delivery rápido',
+        tipo: 'delivery',
+        usosMaximos: 1,
+        horasVigencia: 0.5,
       });
-
-      if (error) throw error;
-
       fetchAutorizaciones();
       Alert.alert(
         '¡QR de Delivery creado!',
         'El código es válido por 30 minutos. Podés compartirlo con el delivery.',
       );
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', error.message ?? 'No se pudo crear la autorización');
     } finally {
       setCreando(false);
     }
   };
 
-  const compartirQR = async (item: AutorizacionDelivery) => {
+  const compartirQR = async (item: Invitacion) => {
     try {
       await Share.share({
-        message: `🚚 Autorización de ingreso - Delivery\n\nCódigo QR: ${item.qr_code}\n\nVálido hasta: ${new Date(item.valido_hasta).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}\n\nMostrá este código en la guardia del barrio.`,
+        message: `🚚 Autorización de ingreso - Delivery\n\nCódigo QR: ${item.qrCode}\n\nVálido hasta: ${item.fechaVence ? new Date(item.fechaVence).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : 'Sin vencimiento'}\n\nMostrá este código en la guardia del barrio.`,
       });
     } catch {}
   };
 
-  const estaActivo = (item: any) => {
-    const expira = new Date(item.valido_hasta);
-    return item.activo && item.usos_actuales < item.usos_permitidos && expira > new Date();
+  const estaActivo = (item: Invitacion) => {
+    const expira = item.fechaVence ? new Date(item.fechaVence) : null;
+    return item.activo && item.usosActuales < item.usosMaximos && (!expira || expira > new Date());
   };
 
-  const tiempoRestante = (item: any) => {
-    const expira = new Date(item.valido_hasta);
-    const ahora = new Date();
-    const diff = expira.getTime() - ahora.getTime();
+  const tiempoRestante = (item: Invitacion) => {
+    if (!item.fechaVence) return 'Activo';
+    const expira = new Date(item.fechaVence);
+    const diff = expira.getTime() - new Date().getTime();
     if (diff <= 0) return 'Expirado';
     const min = Math.floor(diff / 60000);
     return `${min} min restantes`;
   };
 
-  const renderItem = ({ item }: { item: any }) => {
+  const renderItem = ({ item }: { item: Invitacion }) => {
     const activo = estaActivo(item);
 
     return (
@@ -132,14 +105,14 @@ export function DeliveryScreen() {
             </View>
           ) : (
             <Text style={styles.expiradoText}>
-              {item.usos_actuales >= item.usos_permitidos ? '✅ Usado' : '⏰ Expirado'}
+              {item.usosActuales >= item.usosMaximos ? '✅ Usado' : '⏰ Expirado'}
             </Text>
           )}
         </View>
 
-        <Text style={styles.qrCode}>{item.qr_code}</Text>
+        <Text style={styles.qrCode}>{item.qrCode}</Text>
         <Text style={styles.fechaText}>
-          Creado: {new Date(item.created_at).toLocaleString('es-AR', {
+          Creado: {new Date(item.createdAt).toLocaleString('es-AR', {
             day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
           })}
         </Text>

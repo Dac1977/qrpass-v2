@@ -9,60 +9,21 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase, PersonalPermanente } from '../../lib/supabase';
+import { personalApi, PersonalPermanente } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 
-type PersonalConHorarios = PersonalPermanente & {
-  dias_count: number;
-};
-
 export function PersonalScreen({ navigation }: any) {
-  const [personal, setPersonal] = useState<PersonalConHorarios[]>([]);
+  const [personal, setPersonal] = useState<PersonalPermanente[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const { profile } = useAuthStore();
-
-  const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
   const fetchPersonal = useCallback(async () => {
-    if (!profile?.id || !profile?.barrio_id) return;
-
-    // Buscar personal vinculado a este vecino via permisos_horarios
-    const { data: permisos, error: permError } = await supabase
-      .from('permisos_horarios')
-      .select('personal_id')
-      .eq('vecino_id', profile.id)
-      .eq('activo', true);
-
-    if (permError || !permisos?.length) {
+    try {
+      const { personal: data } = await personalApi.mis();
+      setPersonal(data.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    } catch {
       setPersonal([]);
-      return;
     }
-
-    const personalIds = [...new Set(permisos.map((p) => p.personal_id))];
-
-    const { data, error } = await supabase
-      .from('personal_permanente')
-      .select('*')
-      .in('id', personalIds)
-      .eq('activo', true)
-      .order('nombre');
-
-    if (!error && data) {
-      // Contar días de cada personal para este vecino
-      const conHorarios = await Promise.all(
-        data.map(async (p) => {
-          const { count } = await supabase
-            .from('permisos_horarios')
-            .select('*', { count: 'exact', head: true })
-            .eq('personal_id', p.id)
-            .eq('vecino_id', profile.id)
-            .eq('activo', true);
-          return { ...p, dias_count: count || 0 };
-        })
-      );
-      setPersonal(conHorarios as PersonalConHorarios[]);
-    }
-  }, [profile?.id, profile?.barrio_id]);
+  }, []);
 
   useEffect(() => {
     fetchPersonal();
@@ -81,15 +42,15 @@ export function PersonalScreen({ navigation }: any) {
     setRefreshing(false);
   };
 
-  const renderPersonal = ({ item }: { item: PersonalConHorarios }) => (
+  const renderPersonal = ({ item }: { item: PersonalPermanente }) => (
     <TouchableOpacity
       style={styles.card}
       onPress={() => navigation.navigate('DetallePersonal', { personalId: item.id })}
       activeOpacity={0.7}
     >
       <View style={styles.cardRow}>
-        {item.foto_url ? (
-          <Image source={{ uri: item.foto_url }} style={styles.avatar} />
+        {item.foto ? (
+          <Image source={{ uri: item.foto }} style={styles.avatar} />
         ) : (
           <View style={styles.avatarPlaceholder}>
             <Ionicons name="person" size={28} color="#64748b" />
@@ -101,7 +62,7 @@ export function PersonalScreen({ navigation }: any) {
           <View style={styles.badgeRow}>
             <View style={styles.badge}>
               <Ionicons name="calendar-outline" size={12} color="#38bdf8" />
-              <Text style={styles.badgeText}>{item.dias_count} días</Text>
+              <Text style={styles.badgeText}>{item.permisos.length} días</Text>
             </View>
           </View>
         </View>

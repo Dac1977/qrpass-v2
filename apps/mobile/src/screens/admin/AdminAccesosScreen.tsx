@@ -1,88 +1,106 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Alert, ActivityIndicator, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../../components/AppHeader';
-import { supabase } from '../../lib/supabase';
 import { useAuthStore } from '../../store/authStore';
-
-type Terminal = { id: string; nombre: string; activo: boolean };
-type Gate = { id: string; terminal_id: string; nombre: string; tipo: 'IN' | 'OUT' | 'BOTH'; activo: boolean; orden: number };
+import { terminalesApi, Terminal, Gate } from '../../lib/api';
 
 const TIPO_LABELS = { IN: '🟢 Solo Entrada', OUT: '🔴 Solo Salida', BOTH: '🔵 Entrada y Salida' };
 
 export function AdminAccesosScreen() {
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const [terminales, setTerminales] = useState<Terminal[]>([]);
-  const [gates, setGates] = useState<Gate[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [expandida, setExpandida] = useState<string | null>(null);
 
-  // Modal nueva terminal
   const [showNuevaTerminal, setShowNuevaTerminal] = useState(false);
   const [nombreTerminal, setNombreTerminal] = useState('');
 
-  // Modal nuevo gate
-  const [showNuevoGate, setShowNuevoGate] = useState<string | null>(null); // terminal_id
+  const [showNuevoGate, setShowNuevoGate] = useState<string | null>(null);
   const [gateNombre, setGateNombre] = useState('');
   const [gateTipo, setGateTipo] = useState<'IN' | 'OUT' | 'BOTH'>('BOTH');
 
-  const cargar = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+  const cargarTerminales = async () => {
+    if (!space?.id) return;
     setLoading(true);
-    const [{ data: ts }, { data: gs }] = await Promise.all([
-      supabase.from('terminales').select('id, nombre, activo').eq('barrio_id', profile.barrio_id).order('created_at'),
-      supabase.from('puntos_acceso').select('id, terminal_id, nombre, tipo, activo, orden').eq('barrio_id', profile.barrio_id).order('orden'),
-    ]);
-    if (ts) setTerminales(ts);
-    if (gs) setGates(gs);
-    setLoading(false);
-  }, [profile?.barrio_id]);
-
-  useEffect(() => { cargar(); }, [cargar]);
-
-  const crearTerminal = async () => {
-    if (!profile?.barrio_id || !nombreTerminal.trim()) return;
-    await supabase.from('terminales').insert({ barrio_id: profile.barrio_id, nombre: nombreTerminal.trim() });
-    setNombreTerminal('');
-    setShowNuevaTerminal(false);
-    cargar();
+    try {
+      const data = await terminalesApi.listarSpace(space.id);
+      setTerminales(data.terminales);
+    } catch (error) {
+      console.error('Error cargando terminales:', error);
+      Alert.alert('Error', 'No se pudieron cargar las terminales');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const eliminarTerminal = (id: string) => {
-    Alert.alert('Eliminar terminal', '¿Eliminás la terminal y todos sus puntos de acceso?', [
+  useEffect(() => { cargarTerminales(); }, [space?.id]);
+
+  const crearTerminal = async () => {
+    if (!space?.id || !nombreTerminal.trim()) return;
+    try {
+      await terminalesApi.crear({ spaceId: space.id, nombre: nombreTerminal.trim() });
+      setShowNuevaTerminal(false);
+      setNombreTerminal('');
+      cargarTerminales();
+      Alert.alert('Éxito', 'Terminal creada correctamente');
+    } catch (error) {
+      console.error('Error creando terminal:', error);
+      Alert.alert('Error', 'No se pudo crear la terminal');
+    }
+  };
+
+  const eliminarTerminal = async (id: string) => {
+    Alert.alert('Confirmar', '¿Eliminar esta terminal y todos sus puntos de acceso?', [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Eliminar', style: 'destructive', onPress: async () => {
-        await supabase.from('terminales').delete().eq('id', id);
-        cargar();
-      }},
+      {
+        text: 'Eliminar', style: 'destructive', onPress: async () => {
+          try {
+            await terminalesApi.eliminar(id);
+            cargarTerminales();
+            Alert.alert('Éxito', 'Terminal eliminada');
+          } catch (error) {
+            console.error('Error eliminando terminal:', error);
+            Alert.alert('Error', 'No se pudo eliminar la terminal');
+          }
+        },
+      },
     ]);
   };
 
   const crearGate = async () => {
-    if (!profile?.barrio_id || !showNuevoGate || !gateNombre.trim()) return;
-    await supabase.from('puntos_acceso').insert({
-      terminal_id: showNuevoGate,
-      barrio_id: profile.barrio_id,
-      nombre: gateNombre.trim(),
-      tipo: gateTipo,
-      orden: gates.filter(g => g.terminal_id === showNuevoGate).length,
-    });
-    setGateNombre('');
-    setGateTipo('BOTH');
-    setShowNuevoGate(null);
-    cargar();
+    if (!showNuevoGate || !gateNombre.trim()) return;
+    try {
+      await terminalesApi.crearGate({ terminalId: showNuevoGate, nombre: gateNombre.trim(), tipo: gateTipo });
+      setGateNombre('');
+      setGateTipo('BOTH');
+      setShowNuevoGate(null);
+      cargarTerminales();
+      Alert.alert('Éxito', 'Punto de acceso creado');
+    } catch (error) {
+      console.error('Error creando gate:', error);
+      Alert.alert('Error', 'No se pudo crear el punto de acceso');
+    }
   };
 
-  const eliminarGate = (id: string) => {
-    Alert.alert('Eliminar punto de acceso', '¿Eliminás este punto de acceso?', [
+  const eliminarGate = async (id: string) => {
+    Alert.alert('Confirmar', '¿Eliminar este punto de acceso?', [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Eliminar', style: 'destructive', onPress: async () => {
-        await supabase.from('puntos_acceso').delete().eq('id', id);
-        cargar();
-      }},
+      {
+        text: 'Eliminar', style: 'destructive', onPress: async () => {
+          try {
+            await terminalesApi.eliminarGate(id);
+            cargarTerminales();
+            Alert.alert('Éxito', 'Punto de acceso eliminado');
+          } catch (error) {
+            console.error('Error eliminando gate:', error);
+            Alert.alert('Error', 'No se pudo eliminar el punto de acceso');
+          }
+        },
+      },
     ]);
   };
 

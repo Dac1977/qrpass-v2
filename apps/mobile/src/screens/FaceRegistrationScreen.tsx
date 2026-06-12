@@ -3,7 +3,6 @@ import { View, Text, TouchableOpacity, Alert, StyleSheet, ActivityIndicator } fr
 import { Camera as ExpoCamera, CameraView } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../store/authStore';
-import { supabase } from '../lib/supabase';
 
 export default function FaceRegistrationScreen({ navigation }: any) {
   const { profile } = useAuthStore();
@@ -35,7 +34,6 @@ export default function FaceRegistrationScreen({ navigation }: any) {
     setIsCapturing(true);
 
     try {
-      // Capturar imagen
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.8,
         base64: true,
@@ -46,16 +44,13 @@ export default function FaceRegistrationScreen({ navigation }: any) {
         throw new Error('No se pudo capturar la imagen');
       }
 
-      // Guardar foto capturada
       const newPhotos = [...capturedPhotos, photo.base64];
       setCapturedPhotos(newPhotos);
 
-      // Avanzar al siguiente paso
       if (captureStep < captureSteps.length - 1) {
         setCaptureStep(captureStep + 1);
         setIsCapturing(false);
       } else {
-        // Todas las fotos capturadas, procesar
         await processCapturedFaces(newPhotos);
       }
 
@@ -66,50 +61,9 @@ export default function FaceRegistrationScreen({ navigation }: any) {
     }
   };
 
-  const processCapturedFaces = async (photos: string[]) => {
-    try {
-      // Generar embeddings server-side via Edge Function
-      const embeddings: number[][] = [];
-      for (const photo of photos) {
-        const { data, error } = await supabase.functions.invoke('generar-embedding', {
-          body: { image_base64: photo },
-        });
-        if (!error && data?.embedding) {
-          embeddings.push(data.embedding);
-        }
-      }
-
-      if (embeddings.length === 0) {
-        throw new Error('No se detectaron rostros en las imágenes');
-      }
-
-      // Promedio de embeddings
-      const avgEmbedding = new Array(128).fill(0).map((_, i) =>
-        embeddings.reduce((sum, e) => sum + (e[i] ?? 0), 0) / embeddings.length
-      );
-
-      // Guardar en Supabase como vector string
-      const vectorStr = `[${avgEmbedding.join(',')}]`;
-      const { error: saveError } = await supabase
-        .from('rostros_vecinos')
-        .insert({
-          vecino_id: profile?.id,
-          barrio_id: profile?.barrio_id,
-          embedding: vectorStr,
-          confianza: 0.95,
-        });
-
-      if (saveError) throw saveError;
-
-      Alert.alert('Éxito', 'Tu rostro ha sido registrado correctamente', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
-    } catch (error) {
-      console.error('Error procesando rostros:', error);
-      Alert.alert('Error', 'No se pudieron procesar los rostros capturados');
-    } finally {
-      setIsCapturing(false);
-    }
+  const processCapturedFaces = async (_photos: string[]) => {
+    Alert.alert('Próximamente', 'El registro facial estará disponible pronto.');
+    setIsCapturing(false);
   };
 
   if (hasPermission === null) {

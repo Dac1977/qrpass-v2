@@ -4,79 +4,67 @@ import {
   ActivityIndicator, RefreshControl, Alert, TextInput, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { expensasApi, Expensa } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigation } from '@react-navigation/native';
 import { AppHeader } from '../../components/AppHeader';
 import { getSpaceLabels } from '../../utils/spaceLabels';
 
 export function AdminExpensasScreen() {
-  const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
+  const { space } = useAuthStore();
+  const labels = getSpaceLabels(space?.spaceType);
   const navigation = useNavigation();
-  const [expensas, setExpensas] = useState<any[]>([]);
-  const [pagos, setPagos] = useState<any[]>([]);
+  const [expensas, setExpensas] = useState<Expensa[]>([]);
+  const [pagos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ periodo: '', descripcion: '', monto: '' });
 
   const cargar = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
     try {
-      const { data: exp } = await supabase.from('expensas').select('*')
-        .eq('barrio_id', profile.barrio_id).order('periodo', { ascending: false });
-      setExpensas(exp || []);
-
-      const { data: pag } = await supabase.from('pagos')
-        .select('*, expensas!inner(periodo, barrio_id), profiles!pagos_vecino_id_fkey(nombre, numero_casa)')
-        .eq('expensas.barrio_id', profile.barrio_id)
-        .order('created_at', { ascending: false }).limit(50);
-      setPagos((pag || []).map((p: any) => ({
-        ...p, vecino_nombre: p.profiles?.nombre, vecino_casa: p.profiles?.numero_casa, periodo: p.expensas?.periodo,
-      })));
+      const { expensas: data } = await expensasApi.listarSpace(space.id);
+      setExpensas(data);
     } catch (err) { console.error(err); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargar(); }, [cargar]);
   const onRefresh = () => { setRefreshing(true); cargar(); };
 
   const crearExpensa = async () => {
-    if (!profile?.barrio_id || !form.monto || parseFloat(form.monto) <= 0) {
+    if (!space?.id || !form.monto || parseFloat(form.monto) <= 0) {
       Alert.alert('Error', 'Ingresá un monto válido'); return;
     }
     try {
-      const { error } = await supabase.from('expensas').insert({
-        barrio_id: profile.barrio_id,
-        periodo: form.periodo || new Date().toISOString().slice(0, 7),
-        descripcion: form.descripcion || 'Expensas',
-        monto: parseFloat(form.monto),
-      });
-      if (error) {
-        if (error.code === '23505') { Alert.alert('Error', `Ya existe ${labels.paymentSingular === 'expensa' ? 'una' : 'un'} ${labels.paymentSingular} para ese período`); return; }
-        throw error;
-      }
+      const periodo = form.periodo || new Date().toISOString().slice(0, 7);
+      const [anio, mes] = periodo.split('-').map(Number);
+      await expensasApi.generar({ spaceId: space.id, mes, anio, monto: parseFloat(form.monto) });
       setShowModal(false);
       setForm({ periodo: '', descripcion: '', monto: '' });
       cargar();
     } catch (err: any) { Alert.alert('Error', err.message); }
   };
 
-  const toggleExpensa = async (id: string, activo: boolean) => {
-    await supabase.from('expensas').update({ activo: !activo }).eq('id', id);
-    cargar();
+  const toggleExpensa = async (id: string, estado: string) => {
+    try {
+      await expensasApi.actualizar(id, { estado: estado === 'pagada' ? 'pendiente' : 'pagada' });
+      cargar();
+    } catch (error) {
+      console.error('Error actualizando expensa:', error);
+      Alert.alert('Error', 'No se pudo actualizar la expensa');
+    }
   };
 
   const actualizarPago = async (pagoId: string, estado: 'aprobado' | 'rechazado') => {
-    if (!profile?.id) return;
-    Alert.alert('Confirmar', estado === 'aprobado' ? '¿Aprobar este pago?' : '¿Rechazar este pago?', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Confirmar', onPress: async () => {
-        await supabase.from('pagos').update({ estado, revisado_por: profile.id, revisado_at: new Date().toISOString() }).eq('id', pagoId);
-        cargar();
-      }},
-    ]);
+    try {
+      await expensasApi.actualizar(pagoId, { estado: estado === 'aprobado' ? 'pagada' : 'pendiente' });
+      cargar();
+    } catch (error) {
+      console.error('Error actualizando pago:', error);
+      Alert.alert('Error', 'No se pudo actualizar el pago');
+    }
   };
 
   const pagosPendientes = pagos.filter(p => p.estado === 'pendiente');
@@ -101,13 +89,13 @@ export function AdminExpensasScreen() {
         {expensas.map(exp => (
           <View key={exp.id} style={s.card}>
             <View style={{ flex: 1 }}>
-              <Text style={s.cardTitle}>{exp.descripcion}</Text>
-              <Text style={s.cardSub}>Período: {exp.periodo} • ${exp.monto}</Text>
-              {exp.fecha_vencimiento && <Text style={s.cardMeta}>Vence: {new Date(exp.fecha_vencimiento).toLocaleDateString('es-AR')}</Text>}
+              <Text style={s.cardTitle}>{exp.anio}/{String(exp.mes).padStart(2, '0')}</Text>
+              <Text style={s.cardSub}>Estado: {exp.estado} • ${exp.monto}</Text>
+              {exp.fechaVenc && <Text style={s.cardMeta}>Vence: {new Date(exp.fechaVenc).toLocaleDateString('es-AR')}</Text>}
             </View>
-            <TouchableOpacity onPress={() => toggleExpensa(exp.id, exp.activo)} style={s.toggleBtn}>
-              <View style={[s.dot, { backgroundColor: exp.activo ? '#22c55e' : '#64748b' }]} />
-              <Text style={[s.toggleText, { color: exp.activo ? '#22c55e' : '#64748b' }]}>{exp.activo ? 'Activa' : 'Inactiva'}</Text>
+            <TouchableOpacity onPress={() => toggleExpensa(exp.id, exp.estado)} style={s.toggleBtn}>
+              <View style={[s.dot, { backgroundColor: exp.estado === 'pendiente' ? '#f59e0b' : '#22c55e' }]} />
+              <Text style={[s.toggleText, { color: exp.estado === 'pendiente' ? '#f59e0b' : '#22c55e' }]}>{exp.estado === 'pendiente' ? 'Pendiente' : 'Pagada'}</Text>
             </TouchableOpacity>
           </View>
         ))}

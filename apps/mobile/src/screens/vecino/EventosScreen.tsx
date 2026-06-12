@@ -8,40 +8,31 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { supabase, Evento } from '../../lib/supabase';
+import { eventosApi, Evento } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../../components/AppHeader';
 
 export function EventosScreen() {
-  const [eventos, setEventos] = useState<(Evento & { invitados_count?: number })[]>([]);
+  const [eventos, setEventos] = useState<Evento[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const { profile } = useAuthStore();
+  const { profile, space } = useAuthStore();
   const navigation = useNavigation<any>();
 
   const fetchEventos = async () => {
-    if (!profile?.id) return;
-
-    const { data, error } = await supabase
-      .from('eventos')
-      .select('*, invitados_evento(count)')
-      .eq('vecino_id', profile.id)
-      .order('fecha_evento', { ascending: false });
-
-    if (!error && data) {
-      const mapped = data.map((e: any) => ({
-        ...e,
-        invitados_count: e.invitados_evento?.[0]?.count || 0,
-      }));
-      setEventos(mapped);
+    if (!space?.id) return;
+    try {
+      const { events } = await eventosApi.listar(space.id);
+      const mios = events.filter(e => e.organizadorId === profile?.id);
+      setEventos(mios);
+    } catch {
+      // silently ignore
     }
   };
 
   useFocusEffect(
-    useCallback(() => {
-      fetchEventos();
-    }, [profile?.id])
+    useCallback(() => { fetchEventos(); }, [space?.id, profile?.id])
   );
 
   const onRefresh = async () => {
@@ -50,22 +41,22 @@ export function EventosScreen() {
     setRefreshing(false);
   };
 
-  const cancelarEvento = (evento: Evento) => {
-    Alert.alert(
-      'Cancelar evento',
-      `¿Cancelar "${evento.nombre}"? Los QR de invitados dejarán de funcionar.`,
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Sí, cancelar',
-          style: 'destructive',
-          onPress: async () => {
-            await supabase.from('eventos').update({ activo: false }).eq('id', evento.id);
+  const cancelarEvento = async (evento: Evento) => {
+    Alert.alert('Confirmar', '¿Cancelar este evento?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Cancelar evento', style: 'destructive', onPress: async () => {
+          try {
+            await eventosApi.actualizar(evento.id, { activo: false });
             fetchEventos();
-          },
+            Alert.alert('Éxito', 'Evento cancelado');
+          } catch (error) {
+            console.error('Error cancelando evento:', error);
+            Alert.alert('Error', 'No se pudo cancelar el evento');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const formatFecha = (fecha: string) => {
@@ -81,7 +72,7 @@ export function EventosScreen() {
 
   const isEventoFuturo = (fecha: string) => new Date(fecha) > new Date();
 
-  const renderEvento = ({ item }: { item: Evento & { invitados_count?: number } }) => (
+  const renderEvento = ({ item }: { item: Evento }) => (
     <TouchableOpacity
       style={[styles.eventoCard, !item.activo && styles.eventoInactivo]}
       onPress={() => navigation.navigate('DetalleEvento', { eventoId: item.id })}
@@ -89,13 +80,13 @@ export function EventosScreen() {
       <View style={styles.eventoHeader}>
         <View style={{ flex: 1 }}>
           <Text style={styles.eventoNombre}>{item.nombre}</Text>
-          <Text style={styles.eventoFecha}>📅 {formatFecha(item.fecha_evento)}</Text>
+          <Text style={styles.eventoFecha}>📅 {formatFecha(item.fechaEvento)}</Text>
         </View>
         {!item.activo ? (
           <View style={[styles.badge, { backgroundColor: '#ef4444' }]}>
             <Text style={styles.badgeText}>Cancelado</Text>
           </View>
-        ) : !isEventoFuturo(item.fecha_evento) ? (
+        ) : !isEventoFuturo(item.fechaEvento) ? (
           <View style={[styles.badge, { backgroundColor: '#6b7280' }]}>
             <Text style={styles.badgeText}>Pasado</Text>
           </View>
@@ -109,10 +100,7 @@ export function EventosScreen() {
         <Text style={styles.eventoDesc} numberOfLines={2}>{item.descripcion}</Text>
       ) : null}
       <View style={styles.eventoFooter}>
-        <Text style={styles.invitadosCount}>
-          👥 {item.invitados_count} invitado{item.invitados_count !== 1 ? 's' : ''}
-        </Text>
-        {item.activo && isEventoFuturo(item.fecha_evento) && (
+        {item.activo && isEventoFuturo(item.fechaEvento) && (
           <TouchableOpacity onPress={() => cancelarEvento(item)}>
             <Text style={styles.cancelarText}>Cancelar</Text>
           </TouchableOpacity>

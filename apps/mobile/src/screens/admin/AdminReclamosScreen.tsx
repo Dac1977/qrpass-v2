@@ -4,61 +4,55 @@ import {
   ActivityIndicator, RefreshControl, Alert, TextInput, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { reclamosApi, Reclamo } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigation } from '@react-navigation/native';
 import { AppHeader } from '../../components/AppHeader';
 import { getSpaceLabels } from '../../utils/spaceLabels';
 
+type ReclamoAdmin = Reclamo & { usuario: { nombre: string; numeroCasa: string } | null };
+
 export function AdminReclamosScreen() {
-  const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
+  const { space } = useAuthStore();
+  const labels = getSpaceLabels(space?.spaceType);
   const navigation = useNavigation();
-  const [reclamos, setReclamos] = useState<any[]>([]);
+  const [reclamos, setReclamos] = useState<ReclamoAdmin[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [respuestaModal, setRespuestaModal] = useState<{ id: string; texto: string } | null>(null);
 
   const cargar = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
     try {
-      const { data } = await supabase.from('reclamos')
-        .select('*, profiles!reclamos_vecino_id_fkey(nombre, numero_casa)')
-        .eq('barrio_id', profile.barrio_id)
-        .order('created_at', { ascending: false });
-      setReclamos((data || []).map((r: any) => ({
-        ...r,
-        vecino_nombre: r.profiles?.nombre,
-        vecino_casa: r.profiles?.numero_casa,
-      })));
+      const { reclamos: data } = await reclamosApi.listarSpace(space.id);
+      setReclamos(data);
     } catch (err) { console.error(err); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargar(); }, [cargar]);
   const onRefresh = () => { setRefreshing(true); cargar(); };
 
   const responder = async () => {
-    if (!respuestaModal || !profile?.id || !respuestaModal.texto.trim()) return;
-    await supabase.from('reclamos').update({
-      respuesta_admin: respuestaModal.texto,
-      respondido_por: profile.id,
-      respondido_at: new Date().toISOString(),
-      estado: 'en_proceso',
-    }).eq('id', respuestaModal.id);
-    setRespuestaModal(null);
-    cargar();
+    if (!respuestaModal || !respuestaModal.texto.trim()) return;
+    try {
+      await reclamosApi.responder(respuestaModal.id, { respuesta: respuestaModal.texto, estado: 'en_proceso' });
+      setRespuestaModal(null);
+      cargar();
+    } catch (err: any) { Alert.alert('Error', err.message); }
   };
 
   const cambiarEstado = (id: string, titulo: string) => {
-    const estados = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
+    const estados: Array<'en_proceso' | 'resuelto'> = ['en_proceso', 'resuelto'];
     Alert.alert('Cambiar estado', `Reclamo: ${titulo}`, [
       ...estados.map(e => ({
         text: e.charAt(0).toUpperCase() + e.slice(1).replace('_', ' '),
         onPress: async () => {
-          await supabase.from('reclamos').update({ estado: e }).eq('id', id);
-          cargar();
+          try {
+            await reclamosApi.responder(id, { respuesta: '', estado: e });
+            cargar();
+          } catch (err: any) { Alert.alert('Error', err.message); }
         },
       })),
       { text: 'Cancelar', style: 'cancel' as const },
@@ -89,7 +83,7 @@ export function AdminReclamosScreen() {
       <AppHeader title="Reclamos" showBack onBackPress={() => navigation.goBack()} />
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtersScroll} contentContainerStyle={s.filtersContainer}>
-        {['todos', 'abierto', 'en_proceso', 'resuelto', 'cerrado'].map(e => (
+        {['todos', 'pendiente', 'en_proceso', 'resuelto'].map(e => (
           <TouchableOpacity key={e} style={[s.chip, filtroEstado === e && s.chipActive]} onPress={() => setFiltroEstado(e)}>
             <Text style={[s.chipText, filtroEstado === e && s.chipTextActive]}>
               {e === 'todos' ? 'Todos' : e.charAt(0).toUpperCase() + e.slice(1).replace('_', ' ')}
@@ -116,17 +110,17 @@ export function AdminReclamosScreen() {
               </View>
               <Text style={s.cardSub} numberOfLines={2}>{rec.descripcion || ''}</Text>
               <Text style={s.cardMeta}>
-                {rec.vecino_nombre || 'Sin nombre'} • {labels.unit} {rec.vecino_casa || 'N/A'} • {new Date(rec.created_at).toLocaleDateString('es-AR')}
+                {rec.usuario?.nombre || 'Sin nombre'} • {labels.unit} {rec.usuario?.numeroCasa || 'N/A'} • {new Date(rec.createdAt).toLocaleDateString('es-AR')}
               </Text>
-              {rec.respuesta_admin && (
+              {rec.respuesta && (
                 <View style={s.respuestaBox}>
                   <Text style={s.respuestaLabel}>Respuesta:</Text>
-                  <Text style={s.respuestaText} numberOfLines={3}>{rec.respuesta_admin}</Text>
+                  <Text style={s.respuestaText} numberOfLines={3}>{rec.respuesta}</Text>
                 </View>
               )}
             </View>
             <View style={s.actions}>
-              <TouchableOpacity style={s.actionBtn} onPress={() => setRespuestaModal({ id: rec.id, texto: rec.respuesta_admin || '' })}>
+              <TouchableOpacity style={s.actionBtn} onPress={() => setRespuestaModal({ id: rec.id, texto: rec.respuesta || '' })}>
                 <Ionicons name="chatbubble-outline" size={16} color="#3b82f6" />
               </TouchableOpacity>
               <TouchableOpacity style={s.actionBtn} onPress={() => cambiarEstado(rec.id, rec.titulo || 'reclamo')}>

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import { supabase, Invitacion } from '../../lib/supabase';
+import { invitacionesApi, Invitacion } from '../../lib/api';
 import ViewShot from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
@@ -43,7 +43,7 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
   };
 
   const compartirQR = async () => {
-    const mensaje = `🏠 Invitación de acceso al barrio\n\nMostrá este código QR en la guardia o dictá el código:\n\n📝 Código: ${invitacion.qr_code}\n\n👤 Invitado: ${invitacion.nombre_invitado}\n⏰ Válido hasta: ${formatDate(invitacion.valido_hasta)}`;
+    const mensaje = `🏠 Invitación de acceso al barrio\n\nMostrá este código QR en la guardia o dictá el código:\n\n📝 Código: ${invitacion.qrCode}\n\n👤 Invitado: ${invitacion.nombre}\n⏰ Válido hasta: ${invitacion.fechaVence ? formatDate(invitacion.fechaVence) : 'Sin vencimiento'}`;
     
     try {
       if (Platform.OS === 'web') {
@@ -58,7 +58,7 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
   };
 
   const copiarCodigo = async () => {
-    await copyToClipboard(invitacion.qr_code);
+    await copyToClipboard(invitacion.qrCode);
     if (Platform.OS === 'web') {
       window.alert('Código copiado al portapapeles');
     } else {
@@ -68,7 +68,7 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
 
   const compartirWhatsApp = async () => {
     if (Platform.OS === 'web') {
-      const mensaje = `🏠 *Invitación de acceso al barrio*\n\nMostrá este código en la guardia:\n\n📝 *Código:* ${invitacion.qr_code}\n\n👤 *Invitado:* ${invitacion.nombre_invitado}\n⏰ *Válido hasta:* ${formatDate(invitacion.valido_hasta)}`;
+      const mensaje = `🏠 *Invitación de acceso al barrio*\n\nMostrá este código en la guardia:\n\n📝 *Código:* ${invitacion.qrCode}\n\n👤 *Invitado:* ${invitacion.nombre}\n⏰ *Válido hasta:* ${invitacion.fechaVence ? formatDate(invitacion.fechaVence) : 'Sin vencimiento'}`;
       const url = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
       Linking.openURL(url);
       return;
@@ -103,10 +103,7 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
           text: 'Sí, cancelar',
           style: 'destructive',
           onPress: async () => {
-            await supabase
-              .from('invitaciones')
-              .update({ activo: false })
-              .eq('id', invitacion.id);
+            await invitacionesApi.revocar(invitacion.id);
             navigation.goBack();
           },
         },
@@ -114,8 +111,8 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
     );
   };
 
-  const isExpired = new Date(invitacion.valido_hasta) < new Date();
-  const isUsed = invitacion.usos_actuales >= invitacion.usos_permitidos;
+  const isExpired = invitacion.fechaVence ? new Date(invitacion.fechaVence) < new Date() : false;
+  const isUsed = invitacion.usosActuales >= invitacion.usosMaximos;
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
@@ -123,21 +120,21 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
         <View style={styles.qrCard}>
           <View style={styles.qrContainer}>
             <QRCode
-              value={invitacion.qr_code}
+              value={invitacion.qrCode}
               size={250}
               backgroundColor="#fff"
               color="#1a1a2e"
             />
           </View>
-          <Text style={styles.qrNombre} numberOfLines={1}>{invitacion.nombre_invitado}</Text>
-          {invitacion.dni_invitado && (
-            <Text style={styles.qrDni}>DNI: {invitacion.dni_invitado}</Text>
+          <Text style={styles.qrNombre} numberOfLines={1}>{invitacion.nombre}</Text>
+          {invitacion.dni && (
+            <Text style={styles.qrDni}>DNI: {invitacion.dni}</Text>
           )}
-          <Text style={styles.qrCodigo}>{invitacion.qr_code}</Text>
+          <Text style={styles.qrCodigo}>{invitacion.qrCode}</Text>
         </View>
       </ViewShot>
 
-      <Text style={styles.nombre} numberOfLines={2}>{invitacion.nombre_invitado}</Text>
+      <Text style={styles.nombre} numberOfLines={2}>{invitacion.nombre}</Text>
 
       {(isExpired || isUsed) && (
         <View style={styles.expiredBadge}>
@@ -150,20 +147,20 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
       <View style={styles.infoContainer}>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Válido hasta</Text>
-          <Text style={styles.infoValue}>{formatDate(invitacion.valido_hasta)}</Text>
+          <Text style={styles.infoValue}>{invitacion.fechaVence ? formatDate(invitacion.fechaVence) : 'Sin vencimiento'}</Text>
         </View>
 
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Ingresos</Text>
           <Text style={styles.infoValue}>
-            {invitacion.usos_actuales} de {invitacion.usos_permitidos}
+            {invitacion.usosActuales} de {invitacion.usosMaximos}
           </Text>
         </View>
 
-        {invitacion.dni_invitado && (
+        {invitacion.dni && (
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>DNI</Text>
-            <Text style={styles.infoValue}>{invitacion.dni_invitado}</Text>
+            <Text style={styles.infoValue}>{invitacion.dni}</Text>
           </View>
         )}
 
@@ -178,7 +175,7 @@ export function DetalleInvitacionScreen({ route, navigation }: any) {
       <View style={styles.codeContainer}>
         <Text style={styles.codeLabel}>Código:</Text>
         <TouchableOpacity onPress={copiarCodigo}>
-          <Text style={styles.codeText}>{invitacion.qr_code}</Text>
+          <Text style={styles.codeText}>{invitacion.qrCode}</Text>
         </TouchableOpacity>
       </View>
 

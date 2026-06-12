@@ -123,4 +123,23 @@ expensas.patch('/:id/pagar', async (c) => {
   return c.json({ expensa: actualizada });
 });
 
+// PATCH /expensas/:id — actualizar expensa (estado, etc)
+expensas.patch(
+  '/:id',
+  requireRol('admin', 'super_admin'),
+  zValidator('json', z.object({ estado: z.enum(['pendiente', 'pagada', 'vencida']).optional() })),
+  async (c) => {
+    const expensa = await prisma.expensa.findUnique({ where: { id: c.req.param('id') } });
+    if (!expensa) return c.json({ error: 'No encontrada' }, 404);
+
+    const data = c.req.valid('json');
+    const actualizada = await prisma.expensa.update({
+      where: { id: expensa.id },
+      data,
+    });
+
+    return c.json({ expensa: actualizada });
+  }
+);
+
 export default expensas;

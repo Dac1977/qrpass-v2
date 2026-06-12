@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,102 +8,35 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { avisosApi, Aviso } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useFocusEffect } from '@react-navigation/native';
 
-type Aviso = {
-  id: string;
-  titulo: string;
-  contenido: string;
-  categoria: string;
-  fijado: boolean;
-  created_at: string;
-  autor: {
-    nombre: string;
-    numero_casa: string | null;
-  };
-};
-
-const categoriaIconos: Record<string, keyof typeof Ionicons.glyphMap> = {
-  general: 'megaphone-outline',
-  urgente: 'alert-circle-outline',
-  evento: 'calendar-outline',
-  perdido: 'search-outline',
-  venta: 'pricetag-outline',
-  servicio: 'construct-outline',
-};
-
-const categoriaColores: Record<string, string> = {
-  general: '#3b82f6',
-  urgente: '#ef4444',
-  evento: '#8b5cf6',
-  perdido: '#f59e0b',
-  venta: '#22c55e',
-  servicio: '#06b6d4',
-};
 
 export function AvisosScreen({ navigation }: any) {
   const [avisos, setAvisos] = useState<Aviso[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
 
   const fetchAvisos = async () => {
-    if (!profile?.barrio_id) return;
-
-    const { data, error } = await supabase
-      .from('avisos')
-      .select(`
-        id,
-        titulo,
-        contenido,
-        categoria,
-        fijado,
-        created_at,
-        autor:profiles!autor_id(nombre, numero_casa)
-      `)
-      .eq('barrio_id', profile.barrio_id)
-      .eq('activo', true)
-      .order('fijado', { ascending: false })
-      .order('created_at', { ascending: false });
-
-    if (!error && data) {
-      setAvisos(data as unknown as Aviso[]);
+    if (!space?.id) return;
+    try {
+      const { avisos: data } = await avisosApi.listar(space.id);
+      setAvisos(data);
+    } catch {
+      // silently ignore
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-    setLoading(false);
-    setRefreshing(false);
   };
 
   useFocusEffect(
     useCallback(() => {
       fetchAvisos();
-    }, [profile?.barrio_id])
+    }, [space?.id])
   );
-
-  useEffect(() => {
-    if (!profile?.barrio_id) return;
-
-    const channel = supabase
-      .channel('avisos_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'avisos',
-          filter: `barrio_id=eq.${profile.barrio_id}`,
-        },
-        () => {
-          fetchAvisos();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [profile?.barrio_id]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -126,15 +59,17 @@ export function AvisosScreen({ navigation }: any) {
 
   const renderAviso = ({ item }: { item: Aviso }) => (
     <TouchableOpacity
-      style={[styles.avisoCard, item.fijado && styles.avisoFijado]}
+      style={[styles.avisoCard, item.importante && styles.avisoFijado]}
       onPress={() => navigation.navigate('DetalleAviso', { aviso: item })}
     >
       <View style={styles.avisoHeader}>
-        <View style={[styles.categoriaTag, { backgroundColor: categoriaColores[item.categoria] }]}>
-          <Ionicons name={categoriaIconos[item.categoria] as any} size={12} color="#fff" />
-          <Text style={styles.categoriaText}>{item.categoria.toUpperCase()}</Text>
-        </View>
-        {item.fijado && <Ionicons name="pin" size={16} color="#f97316" />}
+        {item.importante && (
+          <View style={[styles.categoriaTag, { backgroundColor: '#ef4444' }]}>
+            <Ionicons name="alert-circle-outline" size={12} color="#fff" />
+            <Text style={styles.categoriaText}>IMPORTANTE</Text>
+          </View>
+        )}
+        {item.importante && <Ionicons name="pin" size={16} color="#f97316" />}
       </View>
 
       <Text style={styles.avisoTitulo}>{item.titulo}</Text>
@@ -143,10 +78,8 @@ export function AvisosScreen({ navigation }: any) {
       </Text>
 
       <View style={styles.avisoFooter}>
-        <Text style={styles.autorText}>
-          {item.autor?.nombre}{item.autor?.numero_casa ? ` • Casa ${item.autor.numero_casa}` : ''}
-        </Text>
-        <Text style={styles.fechaText}>{formatDate(item.created_at)}</Text>
+        <Text style={styles.autorText} />
+        <Text style={styles.fechaText}>{formatDate(item.createdAt)}</Text>
       </View>
     </TouchableOpacity>
   );

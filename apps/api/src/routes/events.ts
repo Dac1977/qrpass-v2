@@ -2,9 +2,10 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRol } from '../middleware/auth';
 
 const events = new Hono();
+events.use('*', authMiddleware);
 
 const createSolicitudSchema = z.object({
   eventLinkId: z.string().uuid(),
@@ -94,5 +95,108 @@ events.get('/solicitudes/:token', async (c) => {
     rejectedAt: solicitud.rejectedAt,
   });
 });
+
+// PATCH /events/:id — actualizar evento (cancelar)
+events.patch(
+  '/:id',
+  zValidator('json', z.object({ activo: z.boolean().optional() })),
+  async (c) => {
+    const { userId } = c.get('user');
+    const evento = await prisma.event.findUnique({ where: { id: c.req.param('id') } });
+    if (!evento) return c.json({ error: 'Evento no encontrado' }, 404);
+
+    // Solo el organizador puede cancelar
+    // Nota: Necesitamos agregar organizadorId al modelo Event
+    const data = c.req.valid('json');
+    const actualizado = await prisma.event.update({
+      where: { id: evento.id },
+      data: { activo: data.activo ?? !evento.activo },
+    });
+    return c.json({ event: actualizado });
+  }
+);
+
+// GET /events/:id/links — listar links de un evento
+events.get('/:id/links', async (c) => {
+  const eventoId = c.req.param('id');
+  const links = await prisma.eventLink.findMany({
+    where: { eventId: eventoId },
+    orderBy: { createdAt: 'desc' },
+  });
+  return c.json({ links });
+});
+
+// POST /events/:id/links — crear link para evento
+events.post(
+  '/:id/links',
+  zValidator('json', z.object({
+    permiteAcompanantes: z.boolean().default(false),
+    maxAcompanantes: z.number().int().default(0),
+    requiereDni: z.boolean().default(false),
+    usosPorPersona: z.number().int().default(1),
+  })),
+  async (c) => {
+    const eventoId = c.req.param('id');
+    const data = c.req.valid('json');
+    const token = Math.random().toString(36).substring(2, 10).toUpperCase();
+
+    const link = await prisma.eventLink.create({
+      data: {
+        eventId: eventoId,
+        token,
+        ...data,
+      },
+    });
+    return c.json({ link }, 201);
+  }
+);
+
+// PATCH /events/links/:id — actualizar link (habilitar/deshabilitar)
+events.patch(
+  '/links/:id',
+  zValidator('json', z.object({ habilitado: z.boolean().optional() })),
+  async (c) => {
+    const link = await prisma.eventLink.findUnique({ where: { id: c.req.param('id') } });
+    if (!link) return c.json({ error: 'Link no encontrado' }, 404);
+
+    const data = c.req.valid('json');
+    const actualizado = await prisma.eventLink.update({
+      where: { id: link.id },
+      data: { habilitado: data.habilitado ?? !link.habilitado },
+    });
+    return c.json({ link: actualizado });
+  }
+);
+
+// GET /events/links/:id/solicitudes — listar solicitudes de un link
+events.get('/links/:id/solicitudes', async (c) => {
+  const linkId = c.req.param('id');
+  const solicitudes = await prisma.eventSolicitud.findMany({
+    where: { eventLinkId: linkId },
+    orderBy: { createdAt: 'desc' },
+  });
+  return c.json({ solicitudes });
+});
+
+// PATCH /events/solicitudes/:id — actualizar solicitud (aceptar/rechazar)
+events.patch(
+  '/solicitudes/:id',
+  zValidator('json', z.object({ estado: z.enum(['aceptada', 'rechazada']) })),
+  async (c) => {
+    const solicitud = await prisma.eventSolicitud.findUnique({ where: { id: c.req.param('id') } });
+    if (!solicitud) return c.json({ error: 'Solicitud no encontrada' }, 404);
+
+    const data = c.req.valid('json');
+    const actualizada = await prisma.eventSolicitud.update({
+      where: { id: solicitud.id },
+      data: {
+        estado: data.estado,
+        acceptedAt: data.estado === 'aceptada' ? new Date() : null,
+        rejectedAt: data.estado === 'rechazada' ? new Date() : null,
+      },
+    });
+    return c.json({ solicitud: actualizada });
+  }
+);
 
 export default events;

@@ -11,20 +11,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { supabase } from '../../lib/supabase';
+import { usersApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { AppHeader } from '../../components/AppHeader';
 import { getSpaceLabels, getSpaceTypeLabel } from '../../utils/spaceLabels';
-
-type SolicitudPendiente = {
-  id: string;
-  nombre: string | null;
-  email: string;
-  numero_casa: string | null;
-  telefono: string | null;
-  estado_aprobacion: string;
-  fecha_solicitud: string;
-};
 
 type Stats = {
   totalUsuarios: number;
@@ -37,70 +27,38 @@ type Stats = {
 
 export function AdminDashboardScreen() {
   const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
-  const [solicitudes, setSolicitudes] = useState<SolicitudPendiente[]>([]);
+  const labels = getSpaceLabels(space?.spaceType);
+  const [solicitudes, setSolicitudes] = useState<any[]>([]);
   const [stats, setStats] = useState<Stats>({ totalUsuarios: 0, totalVecinos: 0, totalGuardias: 0, ingresosHoy: 0, presentesAhora: 0, solicitudesPendientes: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [copiado, setCopiado] = useState(false);
-  const [barrioNombre, setBarrioNombre] = useState('');
-  const [registrarSalidas, setRegistrarSalidas] = useState(false);
+  const [registrarSalidas] = useState(false);
 
   const copiarCodigo = async () => {
-    if (!space?.codigo_invitacion) return;
-    await Clipboard.setStringAsync(space.codigo_invitacion);
+    if (!space?.codigoInvitacion) return;
+    await Clipboard.setStringAsync(space.codigoInvitacion);
     setCopiado(true);
     setTimeout(() => setCopiado(false), 2000);
   };
 
   const cargarDatos = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
 
     try {
-      // Barrio info
-      const { data: barrio } = await supabase
-        .from('barrios')
-        .select('nombre, registrar_salidas')
-        .eq('id', profile.barrio_id)
-        .single();
-      if (barrio) {
-        setBarrioNombre(barrio.nombre);
-        setRegistrarSalidas(barrio.registrar_salidas || false);
-      }
+      const [{ users: allUsers }, { users: pendientes }] = await Promise.all([
+        usersApi.listarSpace(space.id),
+        usersApi.listarSpace(space.id, { estado: 'pendiente' }),
+      ]);
 
-      // Solicitudes pendientes
-      const { data: solData } = await supabase.rpc('get_pending_users', { p_barrio_id: profile.barrio_id });
-      const sols = (solData || []) as SolicitudPendiente[];
-      setSolicitudes(sols);
-
-      // Usuarios
-      const { data: usersData } = await supabase.rpc('get_barrio_users', { p_barrio_id: profile.barrio_id });
-      const users = (usersData || []) as any[];
-
-      // Ingresos hoy
-      const inicioDia = new Date();
-      inicioDia.setHours(0, 0, 0, 0);
-      const { count: ingresosCount } = await supabase
-        .from('ingresos')
-        .select('id', { count: 'exact', head: true })
-        .eq('barrio_id', profile.barrio_id)
-        .gte('created_at', inicioDia.toISOString());
-
-      const { count: presentesCount } = await supabase
-        .from('ingresos')
-        .select('id', { count: 'exact', head: true })
-        .eq('barrio_id', profile.barrio_id)
-        .eq('estado', 'autorizado')
-        .is('salida_at', null)
-        .gte('created_at', inicioDia.toISOString());
-
+      setSolicitudes(pendientes);
       setStats({
-        totalUsuarios: users.length,
-        totalVecinos: users.filter((u: any) => u.rol === 'vecino').length,
-        totalGuardias: users.filter((u: any) => u.rol === 'guardia').length,
-        ingresosHoy: ingresosCount || 0,
-        presentesAhora: presentesCount || 0,
-        solicitudesPendientes: sols.length,
+        totalUsuarios: allUsers.length,
+        totalVecinos: allUsers.filter(u => u.rol === 'vecino').length,
+        totalGuardias: allUsers.filter(u => u.rol === 'guardia').length,
+        ingresosHoy: 0,
+        presentesAhora: 0,
+        solicitudesPendientes: pendientes.length,
       });
     } catch (error) {
       console.error('Error cargando dashboard:', error);
@@ -108,19 +66,16 @@ export function AdminDashboardScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
 
   const onRefresh = () => { setRefreshing(true); cargarDatos(); };
 
   const aprobarUsuario = async (id: string) => {
-    if (!profile?.id) return;
+    if (!space?.id) return;
     try {
-      const { data, error } = await supabase.rpc('aprobar_usuario', { p_usuario_id: id, p_admin_id: profile.id });
-      if (error) throw error;
-      const result = (data as any[])?.[0];
-      if (result && !result.success) throw new Error(result.message);
+      await usersApi.aprobar(id, space.id);
       Alert.alert('Aprobado', 'El usuario fue aprobado correctamente');
       cargarDatos();
     } catch (err: any) {
@@ -133,12 +88,9 @@ export function AdminDashboardScreen() {
       { text: 'Cancelar', style: 'cancel' },
       {
         text: 'Rechazar', style: 'destructive', onPress: async () => {
-          if (!profile?.id) return;
+          if (!space?.id) return;
           try {
-            const { data, error } = await supabase.rpc('rechazar_usuario', { p_usuario_id: id, p_admin_id: profile.id });
-            if (error) throw error;
-            const result = (data as any[])?.[0];
-            if (result && !result.success) throw new Error(result.message);
+            await usersApi.rechazar(id, space.id);
             cargarDatos();
           } catch (err: any) {
             Alert.alert('Error', err.message || 'No se pudo rechazar');
@@ -166,17 +118,17 @@ export function AdminDashboardScreen() {
       >
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.barrioName}>{barrioNombre || space?.nombre}</Text>
+            <Text style={styles.barrioName}>{space?.nombre}</Text>
             <View style={styles.spaceTypeBadgeRow}>
               <Text style={styles.spaceTypeIcon}>{labels.spaceIcon}</Text>
-              <Text style={styles.spaceTypeBadge}>{getSpaceTypeLabel(space?.space_type)}</Text>
+              <Text style={styles.spaceTypeBadge}>{getSpaceTypeLabel(space?.spaceType)}</Text>
             </View>
           </View>
-          {space?.codigo_invitacion && (
+          {space?.codigoInvitacion && (
             <TouchableOpacity style={styles.copyCodeBtn} onPress={copiarCodigo}>
               <Ionicons name={copiado ? 'checkmark' : 'copy-outline'} size={16} color={copiado ? '#22c55e' : '#94a3b8'} />
               <Text style={[styles.copyCodeText, copiado && { color: '#22c55e' }]}>
-                {copiado ? '¡Copiado!' : space.codigo_invitacion}
+                {copiado ? '¡Copiado!' : space.codigoInvitacion}
               </Text>
             </TouchableOpacity>
           )}
@@ -237,10 +189,10 @@ export function AdminDashboardScreen() {
                   <Text style={styles.solNombre}>{sol.nombre || 'Sin nombre'}</Text>
                   <Text style={styles.solEmail}>{sol.email}</Text>
                   <Text style={styles.solMeta}>
-                    {labels.unit} {sol.numero_casa || 'N/A'} {sol.telefono ? `• Tel: ${sol.telefono}` : ''}
+                    {labels.unit} {sol.numeroCasa || 'N/A'} {sol.telefono ? `• Tel: ${sol.telefono}` : ''}
                   </Text>
                   <Text style={styles.solFecha}>
-                    Solicitado: {new Date(sol.fecha_solicitud).toLocaleDateString('es-AR')}
+                    Solicitado: {new Date(sol.createdAt).toLocaleDateString('es-AR')}
                   </Text>
                 </View>
                 <View style={styles.solActions}>

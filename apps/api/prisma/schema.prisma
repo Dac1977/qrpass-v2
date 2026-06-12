@@ -83,11 +83,13 @@ model Space {
   activo             Boolean      @default(true)
   codigoInvitacion   String?      @unique @map("codigo_invitacion")
   organizationId     String       @map("organization_id")
+  registrarSalidas   Boolean      @default(false) @map("registrar_salidas")
   createdAt          DateTime     @default(now()) @map("created_at")
   updatedAt          DateTime     @updatedAt @map("updated_at")
 
   organization       Organization @relation(fields: [organizationId], references: [id])
   memberships        Membership[]
+  terminales         Terminal[]
 
   @@map("spaces")
 }
@@ -134,8 +136,38 @@ model Ingreso {
   invitacionId    String?       @map("invitacion_id")
   personalId      String?       @map("personal_id")
   createdAt       DateTime      @default(now()) @map("created_at")
+  salidaAt        DateTime?     @map("salida_at")
 
   @@map("ingresos")
+}
+
+model Terminal {
+  id        String   @id @default(uuid())
+  spaceId   String   @map("space_id")
+  nombre    String
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  gates Gate[]
+
+  @@map("terminales")
+}
+
+model Gate {
+  id         String   @id @default(uuid())
+  terminalId String   @map("terminal_id")
+  nombre     String
+  tipo       String   @default("BOTH") // IN, OUT, BOTH
+  activo     Boolean  @default(true)
+  orden      Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  terminal Terminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+
+  @@map("gates")
 }
 
 model AlertaEmergencia {

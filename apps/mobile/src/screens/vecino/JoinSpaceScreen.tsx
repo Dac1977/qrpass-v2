@@ -10,7 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
-import { supabase } from '../../lib/supabase';
+import { spacesApi } from '../../lib/api';
 
 const SPACE_TYPE_ICONS: Record<string, string> = {
   residential: '🏘️', gym: '🏋️', club: '🏆', event: '🎪', coworking: '💼', other: '🏢',
@@ -21,7 +21,7 @@ export function JoinSpaceScreen({ route, navigation }: any) {
   const { profile, fetchProfile } = useAuthStore();
 
   const [inputCodigo, setInputCodigo] = useState(codigoParam);
-  const [spaceInfo, setSpaceInfo] = useState<{ id: string; nombre: string; space_type: string } | null>(null);
+  const [spaceInfo, setSpaceInfo] = useState<{ id: string; nombre: string; spaceType: string } | null>(null);
   const [loading, setLoading]     = useState(!!codigoParam);
   const [searching, setSearching] = useState(false);
   const [invalid, setInvalid]     = useState(false);
@@ -35,15 +35,15 @@ export function JoinSpaceScreen({ route, navigation }: any) {
     setSearching(true);
     setInvalid(false);
     setSpaceInfo(null);
-    const { data, error } = await supabase.rpc('validar_codigo_invitacion', { p_codigo: cod.toUpperCase() });
-    const result = (data as any[])?.[0];
-    if (!error && result?.valido) {
-      setSpaceInfo({ id: result.barrio_id, nombre: result.barrio_nombre, space_type: result.space_type ?? 'residential' });
-    } else {
+    try {
+      const { space } = await spacesApi.byCode(cod);
+      setSpaceInfo({ id: space.id, nombre: space.nombre, spaceType: space.spaceType ?? 'residential' });
+    } catch {
       setInvalid(true);
+    } finally {
+      setSearching(false);
+      setLoading(false);
     }
-    setSearching(false);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -52,15 +52,10 @@ export function JoinSpaceScreen({ route, navigation }: any) {
   }, [codigoParam]);
 
   const handleJoin = async () => {
-    if (!profile?.id || !spaceInfo) return;
+    if (!spaceInfo) return;
     setJoining(true);
-    const { data } = await supabase.rpc('unirse_a_espacio', {
-      p_user_id:       profile.id,
-      p_codigo:        inputCodigo,
-      p_numero_unidad: numeroUnidad.trim() || null,
-    });
-    const res = data as any;
-    if (res?.success) {
+    try {
+      await spacesApi.join(inputCodigo, numeroUnidad.trim() || undefined);
       setDone(true);
       await fetchProfile();
       Alert.alert(
@@ -68,12 +63,15 @@ export function JoinSpaceScreen({ route, navigation }: any) {
         `Tu solicitud para "${spaceInfo.nombre}" fue enviada. El administrador debe aprobarte.`,
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
-    } else if (res?.error?.includes('ya')) {
-      setAlreadyMember(true);
-    } else {
-      Alert.alert('Error', res?.error ?? 'Error al enviar solicitud');
+    } catch (err: any) {
+      if (err?.status === 409 || err?.message?.includes('ya')) {
+        setAlreadyMember(true);
+      } else {
+        Alert.alert('Error', err?.message ?? 'Error al enviar solicitud');
+      }
+    } finally {
+      setJoining(false);
     }
-    setJoining(false);
   };
 
   if (loading) return (
@@ -129,7 +127,7 @@ export function JoinSpaceScreen({ route, navigation }: any) {
     </View>
   );
 
-  const icon = SPACE_TYPE_ICONS[spaceInfo.space_type] ?? '🏢';
+  const icon = SPACE_TYPE_ICONS[spaceInfo.spaceType] ?? '🏢';
 
   return (
     <ScrollView contentContainerStyle={styles.scroll}>

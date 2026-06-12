@@ -7,16 +7,12 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  Image,
-  Platform,
   ActivityIndicator,
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { supabase } from '../../lib/supabase';
+import { personalApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
-import { nanoid } from 'nanoid/non-secure';
 
 const DIAS_SEMANA = [
   { value: 1, label: 'Lunes', short: 'L' },
@@ -37,15 +33,12 @@ const INTERVALOS = Array.from({ length: 96 }, (_, i) => {
 });
 
 export function RegistrarPersonalScreen({ navigation }: any) {
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
   const [nombre, setNombre] = useState('');
   const [dni, setDni] = useState('');
   const [telefono, setTelefono] = useState('');
-  const [fotoUri, setFotoUri] = useState<string | null>(null);
   const [horariosPorDia, setHorariosPorDia] = useState<Record<number, HorarioDia>>({});
   const [loading, setLoading] = useState(false);
-  const [buscandoDni, setBuscandoDni] = useState(false);
-  const [personalExistente, setPersonalExistente] = useState<any>(null);
   const [timePicker, setTimePicker] = useState<{ dia: number; campo: 'entrada' | 'salida' } | null>(null);
 
   const toggleDia = (dia: number) => {
@@ -75,121 +68,6 @@ export function RegistrarPersonalScreen({ navigation }: any) {
     }));
   };
 
-  const buscarPorDni = async () => {
-    if (!dni.trim() || !profile?.barrio_id) return;
-    setBuscandoDni(true);
-
-    const { data, error } = await supabase
-      .from('personal_permanente')
-      .select('*')
-      .eq('dni', dni.trim())
-      .eq('barrio_id', profile.barrio_id)
-      .eq('activo', true)
-      .maybeSingle();
-
-    if (!error && data) {
-      setPersonalExistente(data);
-      setNombre(data.nombre);
-      setTelefono(data.telefono || '');
-      if (data.foto_url) setFotoUri(data.foto_url);
-
-      // Verificar si ya está vinculado a este vecino
-      const { data: permiso } = await supabase
-        .from('permisos_horarios')
-        .select('id')
-        .eq('personal_id', data.id)
-        .eq('vecino_id', profile.id)
-        .eq('activo', true)
-        .limit(1);
-
-      if (permiso && permiso.length > 0) {
-        const msg = `${data.nombre} ya está registrado y vinculado a tu casa. Podés ver sus detalles desde la lista.`;
-        if (Platform.OS === 'web') {
-          window.alert(msg);
-        } else {
-          Alert.alert('Ya vinculado', msg);
-        }
-        setBuscandoDni(false);
-        return;
-      }
-
-      const msg = `${data.nombre} ya está registrado en el barrio. Solo se crearán los horarios para tu casa.`;
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-      } else {
-        Alert.alert('Personal encontrado', msg);
-      }
-    } else {
-      setPersonalExistente(null);
-    }
-
-    setBuscandoDni(false);
-  };
-
-  const elegirFoto = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Necesitamos acceso a la galería.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-    }
-  };
-
-  const tomarFoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Necesitamos acceso a la cámara.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFotoUri(result.assets[0].uri);
-    }
-  };
-
-  const subirFoto = async (personalId: string): Promise<string | null> => {
-    if (!fotoUri || fotoUri.startsWith('http')) return fotoUri;
-    try {
-      const response = await fetch(fotoUri);
-      const blob = await response.blob();
-      const arrayBuffer = await new Response(blob).arrayBuffer();
-      const filePath = `${profile?.barrio_id}/${personalId}.jpg`;
-
-      const { error } = await supabase.storage
-        .from('fotos-personal')
-        .upload(filePath, arrayBuffer, {
-          contentType: 'image/jpeg',
-          upsert: true,
-        });
-
-      if (error) {
-        console.error('Error subiendo foto:', error);
-        return null;
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('fotos-personal')
-        .getPublicUrl(filePath);
-
-      return urlData.publicUrl;
-    } catch (err) {
-      console.error('Error procesando foto:', err);
-      return null;
-    }
-  };
-
   const registrar = async () => {
     if (!nombre.trim() || !dni.trim()) {
       Alert.alert('Datos requeridos', 'Nombre y DNI son obligatorios.');
@@ -200,80 +78,27 @@ export function RegistrarPersonalScreen({ navigation }: any) {
       Alert.alert('Horarios requeridos', 'Seleccioná al menos un día de la semana.');
       return;
     }
-    if (!profile?.id || !profile?.barrio_id) return;
+    if (!space?.id) return;
 
     setLoading(true);
-
     try {
-      let personalId: string;
-
-      if (personalExistente) {
-        personalId = personalExistente.id;
-      } else {
-        const qrCode = `PERS-${nanoid(12)}`;
-
-        const { data: nuevoPersonal, error: insertError } = await supabase
-          .from('personal_permanente')
-          .insert({
-            barrio_id: profile.barrio_id,
-            nombre: nombre.trim(),
-            dni: dni.trim(),
-            telefono: telefono.trim() || null,
-            qr_code: qrCode,
-          })
-          .select()
-          .single();
-
-        if (insertError) {
-          if (insertError.code === '23505') {
-            Alert.alert('DNI duplicado', 'Ya existe una persona con este DNI. Presioná "Buscar" para vincularla.');
-            setLoading(false);
-            return;
-          }
-          throw insertError;
-        }
-
-        personalId = nuevoPersonal.id;
-
-        // Subir foto
-        const fotoUrl = await subirFoto(personalId);
-        if (fotoUrl) {
-          await supabase
-            .from('personal_permanente')
-            .update({ foto_url: fotoUrl })
-            .eq('id', personalId);
-        }
-      }
-
-      // Crear permisos horarios (cada día con su propio horario)
       const permisos = diasSeleccionados.map((dia) => ({
-        personal_id: personalId,
-        vecino_id: profile.id,
-        dia_semana: dia,
-        hora_entrada: horariosPorDia[dia].entrada,
-        hora_salida: horariosPorDia[dia].salida,
+        diaSemana: dia,
+        horaEntrada: horariosPorDia[dia].entrada,
+        horaSalida: horariosPorDia[dia].salida,
       }));
 
-      const { error: permError } = await supabase
-        .from('permisos_horarios')
-        .insert(permisos);
+      await personalApi.crear({
+        spaceId: space.id,
+        nombre: nombre.trim(),
+        dni: dni.trim(),
+        permisos,
+      });
 
-      if (permError) throw permError;
-
-      const msg = personalExistente
-        ? `${nombre} fue vinculado a tu casa con los horarios configurados.`
-        : `${nombre} fue registrado exitosamente.`;
-
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-      } else {
-        Alert.alert('Listo', msg);
-      }
-
+      Alert.alert('Listo', `${nombre} fue registrado exitosamente.`);
       navigation.goBack();
     } catch (error: any) {
-      console.error('Error registrando personal:', error);
-      Alert.alert('Error', 'No se pudo registrar el personal. Intentá de nuevo.');
+      Alert.alert('Error', error?.message ?? 'No se pudo registrar el personal.');
     } finally {
       setLoading(false);
     }
@@ -283,37 +108,18 @@ export function RegistrarPersonalScreen({ navigation }: any) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* DNI con búsqueda */}
+      {/* DNI */}
       <View style={styles.section}>
         <Text style={styles.label}>DNI *</Text>
-        <View style={styles.dniRow}>
-          <TextInput
-            style={[styles.input, styles.dniInput]}
-            value={dni}
-            onChangeText={setDni}
-            placeholder="Ej: 30123456"
-            placeholderTextColor="#475569"
-            keyboardType="numeric"
-          />
-          <TouchableOpacity style={styles.dniSearchBtn} onPress={buscarPorDni} disabled={buscandoDni}>
-            {buscandoDni ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="search" size={20} color="#fff" />
-            )}
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.hint}>Buscá por DNI para verificar si ya está registrado</Text>
+        <TextInput
+          style={styles.input}
+          value={dni}
+          onChangeText={setDni}
+          placeholder="Ej: 30123456"
+          placeholderTextColor="#475569"
+          keyboardType="numeric"
+        />
       </View>
-
-      {personalExistente && (
-        <View style={styles.existenteBox}>
-          <Ionicons name="information-circle" size={20} color="#38bdf8" />
-          <Text style={styles.existenteText}>
-            Ya registrado en el barrio. Solo se crearán horarios para tu casa.
-          </Text>
-        </View>
-      )}
 
       {/* Nombre */}
       <View style={styles.section}>
@@ -338,37 +144,9 @@ export function RegistrarPersonalScreen({ navigation }: any) {
           placeholder="Ej: 1155667788"
           placeholderTextColor="#475569"
           keyboardType="phone-pad"
-          editable={!personalExistente}
         />
       </View>
 
-      {/* Foto */}
-      {!personalExistente && (
-        <View style={styles.section}>
-          <Text style={styles.label}>Foto</Text>
-          {fotoUri ? (
-            <View style={styles.fotoContainer}>
-              <Image source={{ uri: fotoUri }} style={styles.fotoPreview} />
-              <TouchableOpacity style={styles.fotoRemove} onPress={() => setFotoUri(null)}>
-                <Ionicons name="close-circle" size={28} color="#ef4444" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.fotoButtons}>
-              <TouchableOpacity style={styles.fotoBtn} onPress={elegirFoto}>
-                <Ionicons name="images-outline" size={28} color="#38bdf8" />
-                <Text style={styles.fotoBtnText}>Galería</Text>
-              </TouchableOpacity>
-              {Platform.OS !== 'web' && (
-                <TouchableOpacity style={styles.fotoBtn} onPress={tomarFoto}>
-                  <Ionicons name="camera-outline" size={28} color="#38bdf8" />
-                  <Text style={styles.fotoBtnText}>Cámara</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-        </View>
-      )}
 
       {/* Días y horarios por día */}
       <View style={styles.section}>
@@ -427,9 +205,7 @@ export function RegistrarPersonalScreen({ navigation }: any) {
         ) : (
           <>
             <Ionicons name="checkmark-circle" size={22} color="#fff" />
-            <Text style={styles.registerBtnText}>
-              {personalExistente ? 'Vincular a mi casa' : 'Registrar Personal'}
-            </Text>
+            <Text style={styles.registerBtnText}>Registrar Personal</Text>
           </>
         )}
       </TouchableOpacity>

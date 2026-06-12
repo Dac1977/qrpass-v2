@@ -4,7 +4,7 @@ import {
   ActivityIndicator, RefreshControl, Alert, Modal, TextInput, Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { amenitiesApi, Amenity } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigation } from '@react-navigation/native';
 import { AppHeader } from '../../components/AppHeader';
@@ -18,10 +18,10 @@ const makeTurno = () => ({
 });
 
 export function AdminAmenitiesScreen() {
-  const { profile, space } = useAuthStore();
-  const labels = getSpaceLabels(space?.space_type);
+  const { space } = useAuthStore();
+  const labels = getSpaceLabels(space?.spaceType);
   const navigation = useNavigation();
-  const [amenities, setAmenities] = useState<any[]>([]);
+  const [amenities, setAmenities] = useState<Amenity[]>([]);
   const [reservas, setReservas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -30,72 +30,64 @@ export function AdminAmenitiesScreen() {
   const [turnos, setTurnos] = useState<{ id: string; etiqueta: string; hora_inicio: string; hora_fin: string; }[]>([makeTurno()]);
 
   const cargar = useCallback(async () => {
-    if (!profile?.barrio_id) return;
+    if (!space?.id) return;
     try {
-      const { data: am } = await supabase.from('amenities').select('*')
-        .eq('barrio_id', profile.barrio_id).order('nombre');
-      setAmenities(am || []);
-
-      const { data: res } = await supabase.from('reservas')
-        .select('*, amenities(nombre), profiles!reservas_vecino_id_fkey(nombre, numero_casa)')
-        .eq('barrio_id', profile.barrio_id)
-        .order('fecha', { ascending: false }).limit(30);
-      setReservas((res || []).map((r: any) => ({
-        ...r,
-        amenity_nombre: r.amenities?.nombre,
-        vecino_nombre: r.profiles?.nombre,
-        vecino_casa: r.profiles?.numero_casa,
-      })));
+      const { amenities: data } = await amenitiesApi.listar(space.id);
+      setAmenities(data);
+      const { reservas: reservasData } = await amenitiesApi.reservasSpace(space.id);
+      setReservas(reservasData);
     } catch (err) { console.error(err); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [profile?.barrio_id]);
+  }, [space?.id]);
 
   useEffect(() => { cargar(); }, [cargar]);
   const onRefresh = () => { setRefreshing(true); cargar(); };
 
   const toggleAmenity = async (id: string, activo: boolean) => {
-    await supabase.from('amenities').update({ activo: !activo }).eq('id', id);
-    cargar();
+    try {
+      await amenitiesApi.toggle(id, !activo);
+      cargar();
+    } catch (error) {
+      console.error('Error toggling amenity:', error);
+      Alert.alert('Error', 'No se pudo actualizar el amenity');
+    }
   };
 
-  const actualizarReserva = (id: string, estado: string) => {
-    Alert.alert('Confirmar', `¿Cambiar estado a "${estado}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Confirmar', onPress: async () => {
-        await supabase.from('reservas').update({ estado }).eq('id', id);
-        cargar();
-      }},
-    ]);
+  const actualizarReserva = async (id: string, estado: string) => {
+    try {
+      await amenitiesApi.actualizarReserva(id, { estado });
+      cargar();
+    } catch (error) {
+      console.error('Error actualizando reserva:', error);
+      Alert.alert('Error', 'No se pudo actualizar la reserva');
+    }
   };
 
   const reservasPendientes = reservas.filter(r => r.estado === 'pendiente');
 
   const guardarAmenity = async () => {
-    if (!profile?.barrio_id || !form.nombre.trim()) {
-      Alert.alert('Error', 'El nombre es obligatorio');
-      return;
-    }
+    if (!space?.id || !form.nombre.trim()) return;
     try {
-      const payload = {
-        barrio_id: profile.barrio_id,
+      await amenitiesApi.crear({
+        spaceId: space.id,
         nombre: form.nombre.trim(),
-        descripcion: form.descripcion.trim() || null,
-        capacidad: form.capacidad ? parseInt(form.capacidad, 10) : null,
-        hora_apertura: form.hora_apertura,
-        hora_cierre: form.hora_cierre,
-        requiere_aprobacion: form.requiere_aprobacion,
-        precio_reserva: parseFloat(form.precio_reserva) || 0,
-        turnos_config: turnos.filter(t => t.hora_inicio && t.hora_fin),
+        descripcion: form.descripcion.trim() || undefined,
+        capacidad: form.capacidad ? parseInt(form.capacidad) : undefined,
+        horaApertura: form.hora_apertura,
+        horaCierre: form.hora_cierre,
+        requiereAprobacion: form.requiere_aprobacion,
+        precioReserva: parseFloat(form.precio_reserva) || 0,
+        turnosConfig: turnos,
         activo: true,
-      };
-      const { error } = await supabase.from('amenities').insert(payload);
-      if (error) throw error;
+      });
       setShowModal(false);
       setForm({ nombre: '', descripcion: '', capacidad: '', hora_apertura: '08:00', hora_cierre: '22:00', requiere_aprobacion: false, precio_reserva: '0' });
       setTurnos([makeTurno()]);
       cargar();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'No se pudo guardar la amenity');
+      Alert.alert('Éxito', 'Amenity creado correctamente');
+    } catch (error) {
+      console.error('Error creando amenity:', error);
+      Alert.alert('Error', 'No se pudo crear el amenity');
     }
   };
 
@@ -126,11 +118,11 @@ export function AdminAmenitiesScreen() {
               <Text style={s.cardTitle}>{am.nombre}</Text>
               <Text style={s.cardSub}>
                 {am.capacidad ? `Capacidad: ${am.capacidad}` : 'Sin límite'}
-                {am.hora_apertura && am.hora_cierre ? ` • ${am.hora_apertura.slice(0,5)} - ${am.hora_cierre.slice(0,5)}` : ''}
+                {am.horaApertura && am.horaCierre ? ` • ${am.horaApertura.slice(0,5)} - ${am.horaCierre.slice(0,5)}` : ''}
               </Text>
               {am.descripcion && <Text style={s.cardMeta} numberOfLines={2}>{am.descripcion}</Text>}
-              {am.precio_reserva > 0 && <Text style={s.precioBadge}>${am.precio_reserva} por reserva</Text>}
-              {am.requiere_aprobacion && <Text style={s.requiresApproval}>Requiere aprobación</Text>}
+              {am.precioReserva > 0 && <Text style={s.precioBadge}>${am.precioReserva} por reserva</Text>}
+              {am.requiereAprobacion && <Text style={s.requiresApproval}>Requiere aprobación</Text>}
             </View>
             <TouchableOpacity onPress={() => toggleAmenity(am.id, am.activo)} style={s.toggleBtn}>
               <View style={[s.dot, { backgroundColor: am.activo ? '#22c55e' : '#64748b' }]} />

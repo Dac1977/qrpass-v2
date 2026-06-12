@@ -8,52 +8,38 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { supabase, Encuesta, Voto } from '../../lib/supabase';
+import { encuestasApi, Encuesta } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 export function EncuestasScreen() {
   const [encuestas, setEncuestas] = useState<Encuesta[]>([]);
-  const [votos, setVotos] = useState<Voto[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selecciones, setSelecciones] = useState<Record<string, number[]>>({});
-  const { profile } = useAuthStore();
+  const { space } = useAuthStore();
 
   const fetchEncuestas = async () => {
-    if (!profile?.barrio_id) return;
-    const { data } = await supabase
-      .from('encuestas')
-      .select('*')
-      .eq('barrio_id', profile.barrio_id)
-      .eq('activa', true)
-      .order('created_at', { ascending: false });
-    if (data) setEncuestas(data);
-  };
-
-  const fetchVotos = async () => {
-    if (!profile?.barrio_id || !profile?.id) return;
-    const { data } = await supabase
-      .from('votos')
-      .select('*')
-      .eq('vecino_id', profile.id);
-    if (data) setVotos(data);
+    if (!space?.id) return;
+    try {
+      const { encuestas: data } = await encuestasApi.listar(space.id);
+      setEncuestas(data);
+    } catch {
+      // silently ignore
+    }
   };
 
   useFocusEffect(
-    useCallback(() => {
-      fetchEncuestas();
-      fetchVotos();
-    }, [profile?.barrio_id, profile?.id])
+    useCallback(() => { fetchEncuestas(); }, [space?.id])
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchEncuestas(), fetchVotos()]);
+    await fetchEncuestas();
     setRefreshing(false);
   };
 
-  const yaVotoEncuesta = (encuestaId: string) => votos.some((v) => v.encuesta_id === encuestaId);
+  const yaVotoEncuesta = (encuesta: Encuesta) => encuesta.miVoto !== null && encuesta.miVoto.length > 0;
 
   const toggleSeleccion = (encuesta: Encuesta, opcionIndex: number, bloqueado: boolean) => {
     if (bloqueado) return;
@@ -76,8 +62,7 @@ export function EncuestasScreen() {
   };
 
   const confirmarVoto = async (encuesta: Encuesta) => {
-    if (!profile?.id) return;
-    if (yaVotoEncuesta(encuesta.id)) return;
+    if (yaVotoEncuesta(encuesta)) return;
 
     const seleccion = selecciones[encuesta.id] || [];
     if (seleccion.length === 0) {
@@ -85,47 +70,25 @@ export function EncuestasScreen() {
       return;
     }
 
-    const payload = seleccion.map((opcionIndex) => ({
-      encuesta_id: encuesta.id,
-      vecino_id: profile.id,
-      opcion_index: opcionIndex,
-      numero_casa: profile.numero_casa ?? null,
-    }));
-
-    const { error } = await supabase.from('votos').insert(payload);
-
-    if (error) {
-      Alert.alert('Error', 'No se pudo registrar tu voto');
-    } else {
+    try {
+      await encuestasApi.votar(encuesta.id, seleccion);
       Alert.alert('¡Gracias!', 'Tu voto fue registrado.');
       setSelecciones((prev) => ({ ...prev, [encuesta.id]: [] }));
-      fetchVotos();
+      fetchEncuestas();
+    } catch {
+      Alert.alert('Error', 'No se pudo registrar tu voto');
     }
   };
 
-  const getVotosPorEncuesta = (encuestaId: string) => {
-    return votos.filter((v) => v.encuesta_id === encuestaId);
-  };
-
-  const getTotalVotosPorOpcion = (encuestaId: string, opcionIndex: number) => {
-    // Contamos todos los votos, pero solo sabemos los nuestros (por RLS)
-    // Para mostrar resultados completos necesitaríamos una función RPC
-    // Por ahora mostramos si YO voté
-    return votos.filter(
-      (v) => v.encuesta_id === encuestaId && v.opcion_index === opcionIndex
-    ).length;
-  };
-
   const isCerrada = (encuesta: Encuesta) => {
-    if (!encuesta.fecha_cierre) return false;
-    return new Date(encuesta.fecha_cierre) < new Date();
+    if (!encuesta.fechaCierre) return false;
+    return new Date(encuesta.fechaCierre) < new Date();
   };
 
   const renderEncuesta = ({ item }: { item: Encuesta }) => {
     const opciones = Array.isArray(item.opciones) ? item.opciones : [];
-    const misVotos = getVotosPorEncuesta(item.id);
     const cerrada = isCerrada(item);
-    const bloqueado = cerrada || misVotos.length > 0;
+    const bloqueado = cerrada || yaVotoEncuesta(item);
     const seleccionPendiente = selecciones[item.id] || [];
 
     return (
@@ -147,7 +110,7 @@ export function EncuestasScreen() {
 
         <View style={styles.opcionesContainer}>
           {opciones.map((opcion: string, index: number) => {
-            const votado = misVotos.some((v) => v.opcion_index === index);
+            const votado = item.miVoto?.includes(index) ?? false;
             return (
               <TouchableOpacity
                 key={index}
@@ -189,9 +152,9 @@ export function EncuestasScreen() {
           </View>
         )}
 
-        {item.fecha_cierre && (
+        {item.fechaCierre && (
           <Text style={styles.fechaCierre}>
-            {cerrada ? 'Cerró' : 'Cierra'}: {new Date(item.fecha_cierre).toLocaleDateString('es-AR', {
+            {cerrada ? 'Cerró' : 'Cierra'}: {new Date(item.fechaCierre).toLocaleDateString('es-AR', {
               day: 'numeric',
               month: 'short',
               hour: '2-digit',
