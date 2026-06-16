@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Alert, StyleSheet, ActivityIndicator } fr
 import { Camera as ExpoCamera, CameraView } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../store/authStore';
+import { faceApi } from '../lib/api';
 
 export default function FaceRegistrationScreen({ navigation }: any) {
   const { profile } = useAuthStore();
@@ -61,9 +62,21 @@ export default function FaceRegistrationScreen({ navigation }: any) {
     }
   };
 
-  const processCapturedFaces = async (_photos: string[]) => {
-    Alert.alert('Próximamente', 'El registro facial estará disponible pronto.');
-    setIsCapturing(false);
+  const processCapturedFaces = async (photos: string[]) => {
+    try {
+      const { success, message } = await faceApi.register(photos);
+      if (success) {
+        Alert.alert('Éxito', message || 'Rostro registrado correctamente');
+        navigation.goBack();
+      } else {
+        Alert.alert('Error', message || 'No se pudo registrar el rostro');
+      }
+    } catch (error) {
+      console.error('Error registrando rostro:', error);
+      Alert.alert('Error', 'No se pudo registrar el rostro. Intenta nuevamente.');
+    } finally {
+      setIsCapturing(false);
+    }
   };
 
   if (hasPermission === null) {

@@ -35,6 +35,7 @@ model User {
   qrCode            String?          @map("qr_code")
   esTitular         Boolean          @default(true) @map("es_titular")
   titularId         String?          @map("titular_id")
+  faceData          String?          @map("face_data")
   createdAt         DateTime         @default(now()) @map("created_at")
   updatedAt         DateTime         @updatedAt @map("updated_at")
 

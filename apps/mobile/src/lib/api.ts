@@ -511,6 +511,15 @@ export const contactosApi = {
   eliminar: (id: string) => apiFetch(`/contactos/${id}`, { method: 'DELETE' }),
 };
 
+// ─── Face Recognition ────────────────────────────────────────────────────────────
+
+export const faceApi = {
+  register: (photos: string[]) =>
+    apiFetch<{ success: boolean; message: string }>('/face/register', { method: 'POST', body: JSON.stringify({ photos }) }),
+  verify: (photo: string, spaceId?: string) =>
+    apiFetch<{ match: boolean; user: any; confidence: number }>('/face/verify', { method: 'POST', body: JSON.stringify({ photo, spaceId }) }),
+};
+
 // ─── Encuestas ────────────────────────────────────────────────────────────────
 
 export const encuestasApi = {

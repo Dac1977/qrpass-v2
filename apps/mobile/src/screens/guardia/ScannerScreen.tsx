@@ -14,7 +14,7 @@ import {
 import { Camera, useCameraDevice, useCameraPermission, useFrameProcessor } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets } from 'react-native-worklets-core';
-import { accesosApi, ValidacionQR, invitacionesApi } from '../../lib/api';
+import { accesosApi, ValidacionQR, invitacionesApi, faceApi } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { abrirBarrera, type BarrierConfig } from '../../lib/barrierControl';
 import { Ionicons } from '@expo/vector-icons';
@@ -196,24 +196,57 @@ export function ScannerScreen() {
     }
   };
 
-  const processFaceValidation = async (_imageBase64: string) => {
+  const processFaceValidation = async (imageBase64: string) => {
     Vibration.vibrate(100);
-    Alert.alert('Próximamente', 'El reconocimiento facial estará disponible pronto.');
-    setEstado('rechazado');
-    setResultado({
-      tipo: 'reconocimiento_facial',
-      estado: 'rechazado',
-      nombre: null,
-      dni: null,
-      vecino_nombre: null,
-      numeroCasa: null,
-      invitacion_id: null,
-      personal_id: null,
-      mensaje: 'No disponible',
-    });
-    timeoutRef.current = setTimeout(resetScanner, 4000);
-    setFaceDetectionActive(false);
-    processingFace.current = false;
+    try {
+      const { match, user, confidence } = await faceApi.verify(imageBase64, space?.id);
+
+      if (match && user) {
+        setEstado('autorizado');
+        setResultado({
+          autorizado: true,
+          tipo_acceso: 'personal',
+          motivo: `Reconocimiento facial (${Math.round(confidence * 100)}%)`,
+          usuario: {
+            id: user.id,
+            nombre: user.nombre,
+            numeroCasa: user.numeroCasa,
+            dni: null,
+            patente: null,
+            tipo: user.rol,
+          },
+        });
+
+        // Registrar acceso si hay configuración de barrera
+        if (space?.abrirBarrera) {
+          const config: BarrierConfig = {
+            gpioPin: space.gpioPin ?? 17,
+            pulseDuration: space.pulseDuration ?? 1000,
+          };
+          await abrirBarrera(config);
+        }
+
+        timeoutRef.current = setTimeout(resetScanner, 3000);
+      } else {
+        setEstado('rechazado');
+        setResultado({
+          autorizado: false,
+          motivo: 'Rostro no reconocido',
+        });
+        timeoutRef.current = setTimeout(resetScanner, 4000);
+      }
+    } catch (error) {
+      console.error('Error verificando rostro:', error);
+      setEstado('rechazado');
+      setResultado({
+        autorizado: false,
+        motivo: 'Error de conexión',
+      });
+      timeoutRef.current = setTimeout(resetScanner, 3000);
+    } finally {
+      setFaceDetectionActive(false);
+      processingFace.current = false;
+    }
   };
 
 
